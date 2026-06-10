@@ -1,0 +1,5 @@
+numpy>=1.24
+opencv-python>=4.8
+PyYAML>=6.0
+ultralytics>=8.2
+airtest>=1.3.4

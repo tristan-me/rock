@@ -1,0 +1,128 @@
+$ErrorActionPreference = "Stop"
+
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Sdk = Join-Path $Root ".android-sdk"
+$BuildTools = Join-Path $Sdk "build-tools\35.0.0"
+$AndroidJar = Join-Path $Sdk "platforms\android-35\android.jar"
+$Aapt2 = Join-Path $BuildTools "aapt2.exe"
+$D8 = Join-Path $BuildTools "d8.bat"
+$Zipalign = Join-Path $BuildTools "zipalign.exe"
+$ApkSigner = Join-Path $BuildTools "apksigner.bat"
+$TfliteAar = Join-Path $Root ".deps\tensorflow-lite-2.16.1.aar"
+$TfliteApiAar = Join-Path $Root ".deps\tensorflow-lite-api-2.16.1.aar"
+$Build = Join-Path $Root "manual-build"
+$OutDir = Join-Path $Root "app\build\outputs\apk\debug"
+$FinalApk = Join-Path $OutDir "app-debug.apk"
+
+function Assert-LastExit($Name) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name failed with exit code $LASTEXITCODE"
+    }
+}
+
+foreach ($Path in @($AndroidJar, $Aapt2, $D8, $Zipalign, $ApkSigner, $TfliteAar, $TfliteApiAar)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing required file: $Path"
+    }
+}
+
+Remove-Item -LiteralPath $Build -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $Build, $OutDir | Out-Null
+
+$TfliteDir = Join-Path $Build "tflite"
+$TfliteApiDir = Join-Path $Build "tflite-api"
+New-Item -ItemType Directory -Force -Path $TfliteDir, $TfliteApiDir | Out-Null
+tar -xf $TfliteAar -C $TfliteDir
+Assert-LastExit "extract tensorflow-lite"
+tar -xf $TfliteApiAar -C $TfliteApiDir
+Assert-LastExit "extract tensorflow-lite-api"
+
+$CompiledRes = Join-Path $Build "compiled-res.zip"
+$Generated = Join-Path $Build "generated"
+$BaseApk = Join-Path $Build "base.apk"
+New-Item -ItemType Directory -Force -Path $Generated | Out-Null
+
+& $Aapt2 compile --dir (Join-Path $Root "app\src\main\res") -o $CompiledRes
+Assert-LastExit "aapt2 compile"
+& $Aapt2 link `
+    -o $BaseApk `
+    -I $AndroidJar `
+    --manifest (Join-Path $Root "app\src\main\AndroidManifest.xml") `
+    -R $CompiledRes `
+    -A (Join-Path $Root "app\src\main\assets") `
+    --java $Generated `
+    --auto-add-overlay `
+    --min-sdk-version 26 `
+    --target-sdk-version 35 `
+    --version-code 2 `
+    --version-name 0.2.0
+Assert-LastExit "aapt2 link"
+
+$ClassesDir = Join-Path $Build "classes"
+New-Item -ItemType Directory -Force -Path $ClassesDir | Out-Null
+$SourcesFile = Join-Path $Build "sources.txt"
+$SourceFiles = @()
+$SourceFiles += Get-ChildItem -LiteralPath (Join-Path $Root "app\src\main\java") -Recurse -Filter *.java | ForEach-Object { $_.FullName }
+$SourceFiles += Get-ChildItem -LiteralPath $Generated -Recurse -Filter *.java | ForEach-Object { $_.FullName }
+$SourceFiles | Set-Content -LiteralPath $SourcesFile -Encoding ASCII
+
+$TfliteClasses = Join-Path $TfliteDir "classes.jar"
+$TfliteApiClasses = Join-Path $TfliteApiDir "classes.jar"
+$Classpath = "$AndroidJar;$TfliteClasses;$TfliteApiClasses"
+javac -encoding UTF-8 -source 8 -target 8 -classpath $Classpath -d $ClassesDir "@$SourcesFile"
+Assert-LastExit "javac"
+
+$ClassesJar = Join-Path $Build "classes.jar"
+Push-Location $ClassesDir
+jar cf $ClassesJar .
+Assert-LastExit "jar classes"
+Pop-Location
+
+$DexDir = Join-Path $Build "dex"
+New-Item -ItemType Directory -Force -Path $DexDir | Out-Null
+& $D8 --min-api 26 --output $DexDir $ClassesJar $TfliteClasses $TfliteApiClasses
+Assert-LastExit "d8"
+
+$ApkAdd = Join-Path $Build "apk-add"
+New-Item -ItemType Directory -Force -Path $ApkAdd | Out-Null
+Copy-Item -LiteralPath (Join-Path $DexDir "classes.dex") -Destination (Join-Path $ApkAdd "classes.dex")
+New-Item -ItemType Directory -Force -Path (Join-Path $ApkAdd "lib") | Out-Null
+Copy-Item -LiteralPath (Join-Path $TfliteDir "jni\arm64-v8a") -Destination (Join-Path $ApkAdd "lib\arm64-v8a") -Recurse
+Copy-Item -LiteralPath (Join-Path $TfliteDir "jni\armeabi-v7a") -Destination (Join-Path $ApkAdd "lib\armeabi-v7a") -Recurse
+Copy-Item -LiteralPath (Join-Path $TfliteDir "jni\x86") -Destination (Join-Path $ApkAdd "lib\x86") -Recurse
+Copy-Item -LiteralPath (Join-Path $TfliteDir "jni\x86_64") -Destination (Join-Path $ApkAdd "lib\x86_64") -Recurse
+
+Push-Location $ApkAdd
+jar uf $BaseApk classes.dex lib\arm64-v8a\libtensorflowlite_jni.so lib\armeabi-v7a\libtensorflowlite_jni.so lib\x86\libtensorflowlite_jni.so lib\x86_64\libtensorflowlite_jni.so
+Assert-LastExit "jar apk update"
+Pop-Location
+
+$AlignedApk = Join-Path $Build "aligned.apk"
+& $Zipalign -f 4 $BaseApk $AlignedApk
+Assert-LastExit "zipalign"
+
+$Keystore = Join-Path $Build "debug.keystore"
+if (-not (Test-Path -LiteralPath $Keystore)) {
+    keytool -genkeypair `
+        -keystore $Keystore `
+        -storepass android `
+        -keypass android `
+        -alias androiddebugkey `
+        -keyalg RSA `
+        -keysize 2048 `
+        -validity 10000 `
+        -dname "CN=Android Debug,O=Android,C=US" `
+        -storetype JKS | Out-Null
+}
+
+    & $ApkSigner sign `
+    --ks $Keystore `
+    --ks-pass pass:android `
+    --key-pass pass:android `
+    --out $FinalApk `
+    $AlignedApk
+Assert-LastExit "apksigner sign"
+
+& $ApkSigner verify --verbose $FinalApk
+Assert-LastExit "apksigner verify"
+Write-Host "APK: $FinalApk"

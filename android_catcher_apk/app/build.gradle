@@ -1,0 +1,21 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.example.rockcatcher"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.example.rockcatcher"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+    }
+}
+
+dependencies {
+    implementation "org.tensorflow:tensorflow-lite:2.16.1"
+    implementation "org.tensorflow:tensorflow-lite-api:2.16.1"
+}

@@ -1,0 +1,56 @@
+device:
+  adb_path: adb
+  serial: ""
+  controller: auto # auto | adb_motionevent | adb_swipe | airtest
+
+capture:
+  source: adb
+  timeout_sec: 8
+
+model:
+  path: models/best.pt
+  conf: 0.45
+  iou: 0.50
+  classes:
+    sprite:
+      - sprite
+      - pet
+      - monster
+    reticle:
+      - reticle
+      - crosshair
+      - aim
+    ball_button:
+      - ball_button
+      - throw_button
+      - ball
+
+templates:
+  threshold: 0.82
+  reticle: ""
+  ball_button: ""
+
+fallback:
+  # 按你的设备分辨率改。坐标格式为 [x, y]。
+  reticle: [960, 540]
+  ball_button: [1720, 860]
+
+aim:
+  gain_x: 0.65
+  gain_y: 0.65
+  direction_x: 1
+  direction_y: 1
+  max_step_px: 120
+  release_radius_px: 28
+  hold_before_ms: 180
+  move_interval_ms: 90
+  max_hold_ms: 2400
+  retry_delay_ms: 900
+  min_confidence_sprite: 0.35
+
+runtime:
+  dry_run: true
+  preview: true
+  loop: true
+  save_debug: false
+  debug_dir: runs/debug

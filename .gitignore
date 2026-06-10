@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+data/
+models/
+runs/
+config.local.yaml
+
+# Android local toolchains, caches, and build outputs
+android_catcher_apk/.android-sdk/
+android_catcher_apk/.downloads/
+android_catcher_apk/.gradle-dist/
+android_catcher_apk/.gradle/
+android_catcher_apk/manual-build/
+android_catcher_apk/app/build/
