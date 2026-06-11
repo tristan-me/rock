@@ -22,12 +22,16 @@ import android.preference.PreferenceManager;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class CaptureService extends Service {
     static final String ACTION_START = "com.example.rockcatcher.START";
+    static final String ACTION_ARM = "com.example.rockcatcher.ARM";
+    static final String ACTION_PAUSE = "com.example.rockcatcher.PAUSE";
+    static final String ACTION_RECORD = "com.example.rockcatcher.RECORD";
     static final String ACTION_STOP = "com.example.rockcatcher.STOP";
     static final String EXTRA_RESULT_CODE = "result_code";
     static final String EXTRA_RESULT_DATA = "result_data";
@@ -38,9 +42,14 @@ public final class CaptureService extends Service {
     }
 
     private static volatile StatusListener listener;
+    private static volatile boolean running = false;
 
     static void setStatusListener(StatusListener statusListener) {
         listener = statusListener;
+    }
+
+    static boolean isRunning() {
+        return running;
     }
 
     private HandlerThread thread;
@@ -52,7 +61,9 @@ public final class CaptureService extends Service {
     private SharedPreferences prefs;
     private final AtomicBoolean processing = new AtomicBoolean(false);
     private volatile boolean armed = false;
+    private volatile boolean recordNextFrame = false;
     private long lastGestureMs = 0L;
+    private Bitmap latestBitmap;
 
     @Override
     public void onCreate() {
@@ -72,11 +83,28 @@ public final class CaptureService extends Service {
         }
         String action = intent.getAction();
         if (ACTION_STOP.equals(action)) {
+            running = false;
             stopSelf();
             return START_NOT_STICKY;
         }
+        if (ACTION_ARM.equals(action)) {
+            armed = true;
+            emit("抓捕已开启：软件会接管屏幕手势。");
+            return START_STICKY;
+        }
+        if (ACTION_PAUSE.equals(action)) {
+            armed = false;
+            emit("抓捕已暂停：继续识别但不会控制手机。");
+            return START_STICKY;
+        }
+        if (ACTION_RECORD.equals(action)) {
+            recordNextFrame = true;
+            saveLatestFrameIfAvailable();
+            return START_STICKY;
+        }
         if (ACTION_START.equals(action)) {
             armed = intent.getBooleanExtra(EXTRA_ARMED, false);
+            running = true;
             startForeground(1, buildNotification(armed));
             int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
             Intent data = intent.getParcelableExtra(EXTRA_RESULT_DATA);
@@ -123,7 +151,7 @@ public final class CaptureService extends Service {
                 imageReader.getSurface(),
                 null,
                 handler);
-        emit("capture started " + width + "x" + height + (armed ? " armed" : " dry-run"));
+        emit("悬浮条已准备 " + width + "x" + height + (armed ? "，抓捕中" : "，待命中"));
     }
 
     private void onImageAvailable(ImageReader reader) {
@@ -141,6 +169,11 @@ public final class CaptureService extends Service {
         }
         try {
             Bitmap bitmap = imageToBitmap(image);
+            rememberLatestFrame(bitmap);
+            if (recordNextFrame) {
+                recordNextFrame = false;
+                saveFrame(bitmap);
+            }
             processFrame(bitmap);
             bitmap.recycle();
         } catch (Exception ex) {
@@ -170,7 +203,7 @@ public final class CaptureService extends Service {
         CatchConfig config = CatchConfig.from(prefs);
         DetectionResult result = detector.detect(bitmap, config);
         if (!result.hasTarget()) {
-            emit((armed ? "armed " : "dry ") + result.status);
+            emit((armed ? "抓捕中 " : "待命 ") + result.status);
             return;
         }
 
@@ -197,7 +230,7 @@ public final class CaptureService extends Service {
         String status = String.format(
                 Locale.US,
                 "%s dist=%.1f step=(%.0f,%.0f) ball=(%.0f,%.0f)->(%.0f,%.0f)",
-                armed ? "armed" : "dry-run only",
+                armed ? "抓捕中" : "待命识别",
                 distance,
                 stepX,
                 stepY,
@@ -229,6 +262,7 @@ public final class CaptureService extends Service {
     }
 
     private void stopProjection() {
+        forgetLatestFrame();
         if (imageReader != null) {
             imageReader.close();
             imageReader = null;
@@ -260,10 +294,55 @@ public final class CaptureService extends Service {
                 : new Notification.Builder(this);
         return builder
                 .setContentTitle("Rock Catcher")
-                .setContentText(armedMode ? "Armed screen loop running" : "Dry-run screen loop running")
+                .setContentText(armedMode ? "抓捕运行中" : "悬浮条待命中")
                 .setSmallIcon(R.drawable.ic_launcher)
                 .setOngoing(true)
                 .build();
+    }
+
+    private void rememberLatestFrame(Bitmap bitmap) {
+        synchronized (this) {
+            if (latestBitmap != null) {
+                latestBitmap.recycle();
+            }
+            latestBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
+        }
+    }
+
+    private void forgetLatestFrame() {
+        synchronized (this) {
+            if (latestBitmap != null) {
+                latestBitmap.recycle();
+                latestBitmap = null;
+            }
+        }
+    }
+
+    private void saveLatestFrameIfAvailable() {
+        Bitmap copy = null;
+        synchronized (this) {
+            if (latestBitmap != null) {
+                copy = latestBitmap.copy(Bitmap.Config.ARGB_8888, false);
+            }
+        }
+        if (copy == null) {
+            emit("录制已请求：等待下一帧截图。");
+            return;
+        }
+        try {
+            saveFrame(copy);
+        } finally {
+            copy.recycle();
+        }
+    }
+
+    private void saveFrame(Bitmap bitmap) {
+        try {
+            File file = new TrainerStore(this).saveBitmap(bitmap, "record");
+            emit("已录制当前画面: " + file.getAbsolutePath());
+        } catch (Exception ex) {
+            emit("录制失败: " + ex.getMessage());
+        }
     }
 
     private void emit(String status) {
@@ -275,6 +354,7 @@ public final class CaptureService extends Service {
 
     @Override
     public void onDestroy() {
+        running = false;
         stopProjection();
         if (detector != null) {
             detector.close();

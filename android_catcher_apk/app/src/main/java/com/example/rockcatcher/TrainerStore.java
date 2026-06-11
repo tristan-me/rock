@@ -90,6 +90,27 @@ final class TrainerStore {
         return out;
     }
 
+    File saveBitmap(Bitmap bitmap, String prefix) throws IOException {
+        if (bitmap == null) {
+            throw new IOException("bitmap is null");
+        }
+        imagesDir.mkdirs();
+        String safePrefix = prefix == null || prefix.trim().isEmpty() ? "img" : prefix.trim();
+        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
+        File out = new File(imagesDir, safePrefix + "_" + stamp + ".png");
+        int suffix = 1;
+        while (out.exists()) {
+            out = new File(imagesDir, safePrefix + "_" + stamp + "_" + suffix + ".png");
+            suffix++;
+        }
+        try (FileOutputStream output = new FileOutputStream(out)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                throw new IOException("failed to save bitmap");
+            }
+        }
+        return out;
+    }
+
     Map<String, List<Annotation>> loadAnnotations() {
         Map<String, List<Annotation>> result = new LinkedHashMap<>();
         if (!annotationsFile.exists()) {

@@ -31,7 +31,6 @@ public final class MainActivity extends Activity {
     private SharedPreferences prefs;
     private TextView statusView;
     private TextView accessView;
-    private boolean pendingArmed = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,8 +75,8 @@ public final class MainActivity extends Activity {
 
         TextView note = new TextView(this);
         note.setText("本 APK 是本地视觉和手势原型。训练只学习精灵；准星和扔球键只用下面的 X/Y 坐标标定。\n\n"
-                + "Dry Run：只截屏、识别精灵、计算应该怎么滑，不会控制手机。\n"
-                + "Armed：在 Dry Run 稳定后使用，会通过无障碍服务真正发送滑动手势。");
+                + "先点“启动悬浮条/准备接管”授权截屏，然后进入游戏。\n"
+                + "悬浮条里的“抓捕”才会真正接管屏幕；“暂停”会继续识别但不控制手机。");
         note.setPadding(0, dp(8), 0, dp(12));
         root.addView(note);
 
@@ -94,10 +93,10 @@ public final class MainActivity extends Activity {
         root.addView(accessView);
 
         addButton(root, "打开无障碍设置", v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        addButton(root, "导入图片 / 标注 / 训练", v -> startActivity(new Intent(this, TrainerActivity.class)));
-        addButton(root, "启动 Dry Run", v -> startCapture(false));
-        addButton(root, "启动 Armed", v -> startCapture(true));
-        addButton(root, "停止", v -> stopService(new Intent(this, CaptureService.class).setAction(CaptureService.ACTION_STOP)));
+        addButton(root, "精灵图片 / 标注 / 训练", v -> startActivity(new Intent(this, TrainerActivity.class)));
+        addButton(root, "标定准星 / 扔球键", v -> startActivity(new Intent(this, CalibrationActivity.class)));
+        addButton(root, "启动悬浮条 / 准备接管", v -> startCapture());
+        addButton(root, "停止接管服务", v -> stopService(new Intent(this, CaptureService.class).setAction(CaptureService.ACTION_STOP)));
         addButton(root, "打开应用详情", v -> {
             Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
             intent.setData(Uri.parse("package:" + getPackageName()));
@@ -109,9 +108,13 @@ public final class MainActivity extends Activity {
         addField(root, "ball_x", "扔球键 X", "1720");
         addField(root, "ball_y", "扔球键 Y", "860");
         TextView calibrationNote = new TextView(this);
-        calibrationNote.setText("准星和扔球键不需要训练。可以手填坐标，也可以进入训练页，在截图上点“标定准星 / 标定扔球键”自动写入中心点。");
+        calibrationNote.setText("准星和扔球键不需要训练。可以手填坐标，也可以进入“标定准星 / 扔球键”页面在截图上点中心点。");
         calibrationNote.setPadding(0, dp(6), 0, dp(4));
         root.addView(calibrationNote);
+        TextView sensitivityNote = new TextView(this);
+        sensitivityNote.setText("灵敏度说明：游戏里长按并移动扔球键会带动视角，软件只能按坐标差换算滑动量，所以需要用 X/Y 灵敏度、方向、最大步长实测调参。悬浮条“录制”会保存当前画面，方便补训练图或排查坐标。");
+        sensitivityNote.setPadding(0, dp(6), 0, dp(4));
+        root.addView(sensitivityNote);
         addField(root, "confidence", "置信度", "0.45");
         addField(root, "gain_x", "X 灵敏度", "0.65");
         addField(root, "gain_y", "Y 灵敏度", "0.65");
@@ -155,9 +158,8 @@ public final class MainActivity extends Activity {
         root.addView(edit);
     }
 
-    private void startCapture(boolean armed) {
+    private void startCapture() {
         saveFields();
-        pendingArmed = armed;
         MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         startActivityForResult(manager.createScreenCaptureIntent(), REQ_CAPTURE);
     }
@@ -181,7 +183,7 @@ public final class MainActivity extends Activity {
         service.setAction(CaptureService.ACTION_START);
         service.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode);
         service.putExtra(CaptureService.EXTRA_RESULT_DATA, data);
-        service.putExtra(CaptureService.EXTRA_ARMED, pendingArmed);
+        service.putExtra(CaptureService.EXTRA_ARMED, false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(service);
         } else {
