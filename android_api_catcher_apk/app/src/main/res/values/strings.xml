@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rock Catcher API</string>
+    <string name="accessibility_service_label">Rock Catcher API Gestures</string>
+    <string name="accessibility_description">允许 Rock Catcher API 在用户明确启动后执行屏幕手势。</string>
+</resources>

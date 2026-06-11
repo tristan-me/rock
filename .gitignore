@@ -13,3 +13,10 @@ android_catcher_apk/.gradle-dist/
 android_catcher_apk/.gradle/
 android_catcher_apk/manual-build/
 android_catcher_apk/app/build/
+
+android_api_catcher_apk/.android-sdk/
+android_api_catcher_apk/.downloads/
+android_api_catcher_apk/.gradle-dist/
+android_api_catcher_apk/.gradle/
+android_api_catcher_apk/manual-build/
+android_api_catcher_apk/app/build/
