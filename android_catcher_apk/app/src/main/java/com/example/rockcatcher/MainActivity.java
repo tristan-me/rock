@@ -75,7 +75,9 @@ public final class MainActivity extends Activity {
         root.addView(title);
 
         TextView note = new TextView(this);
-        note.setText("本 APK 是本地视觉和手势原型。默认 dry-run；armed 模式会执行无障碍手势。可使用 model.tflite，也可在 APK 内用少量图片训练 template_model.tsv。");
+        note.setText("本 APK 是本地视觉和手势原型。训练只学习精灵；准星和扔球键只用下面的 X/Y 坐标标定。\n\n"
+                + "Dry Run：只截屏、识别精灵、计算应该怎么滑，不会控制手机。\n"
+                + "Armed：在 Dry Run 稳定后使用，会通过无障碍服务真正发送滑动手势。");
         note.setPadding(0, dp(8), 0, dp(12));
         root.addView(note);
 
@@ -83,7 +85,7 @@ public final class MainActivity extends Activity {
         File modelFile = new File(getExternalFilesDir(null), "model.tflite");
         File templateFile = TemplateModel.modelFile(this);
         modelPath.setText("YOLO 模型路径:\n" + modelFile.getAbsolutePath()
-                + "\n\n端上训练模型路径:\n" + templateFile.getAbsolutePath());
+                + "\n\n端上精灵模板路径:\n" + templateFile.getAbsolutePath());
         modelPath.setTextIsSelectable(true);
         root.addView(modelPath);
 
@@ -106,6 +108,10 @@ public final class MainActivity extends Activity {
         addField(root, "reticle_y", "准星 Y", "540");
         addField(root, "ball_x", "扔球键 X", "1720");
         addField(root, "ball_y", "扔球键 Y", "860");
+        TextView calibrationNote = new TextView(this);
+        calibrationNote.setText("准星和扔球键不需要训练。可以手填坐标，也可以进入训练页，在截图上点“标定准星 / 标定扔球键”自动写入中心点。");
+        calibrationNote.setPadding(0, dp(6), 0, dp(4));
+        root.addView(calibrationNote);
         addField(root, "confidence", "置信度", "0.45");
         addField(root, "gain_x", "X 灵敏度", "0.65");
         addField(root, "gain_y", "Y 灵敏度", "0.65");

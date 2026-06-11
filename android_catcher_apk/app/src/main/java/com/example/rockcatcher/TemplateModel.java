@@ -16,7 +16,6 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -27,6 +26,7 @@ final class TemplateModel {
     static final int GRID_H = 12;
     static final String FILE_NAME = "template_model.tsv";
     private static final int FEATURE_BYTES = GRID_W * GRID_H * 3;
+    private static final int RECOMMENDED_SPRITE_IMAGES = 8;
 
     final List<Sample> samples = new ArrayList<>();
 
@@ -108,6 +108,9 @@ final class TemplateModel {
                 if (!Annotation.isSupportedLabel(parts[1])) {
                     continue;
                 }
+                if (!Annotation.LABEL_SPRITE.equals(Annotation.normalizeLabel(parts[1]))) {
+                    continue;
+                }
                 try {
                     byte[] rgb = Base64.decode(parts[8], Base64.NO_WRAP);
                     if (rgb.length != FEATURE_BYTES) {
@@ -144,6 +147,9 @@ final class TemplateModel {
             }
             try {
                 for (Annotation annotation : imageAnnotations) {
+                    if (!Annotation.LABEL_SPRITE.equals(annotation.label)) {
+                        continue;
+                    }
                     Sample sample = sampleFrom(bitmap, annotation);
                     if (sample != null) {
                         model.samples.add(sample);
@@ -154,7 +160,7 @@ final class TemplateModel {
             }
         }
         if (model.countForLabel(Annotation.LABEL_SPRITE) == 0) {
-            throw new IOException("至少需要标注 1 个 sprite 才能训练");
+            throw new IOException("至少需要标注 1 个精灵框才能训练；准星和扔球键请在主界面填写坐标，不参与训练。");
         }
         return model;
     }
@@ -162,10 +168,8 @@ final class TemplateModel {
     String buildReport(Context context, List<File> imageFiles, Map<String, List<Annotation>> annotations) {
         CatchConfig config = CatchConfig.from(android.preference.PreferenceManager.getDefaultSharedPreferences(context));
         TemplateDetector detector = new TemplateDetector(this);
-        Map<LabelKey, Stats> stats = new EnumMap<>(LabelKey.class);
-        for (LabelKey key : LabelKey.values()) {
-            stats.put(key, new Stats());
-        }
+        Stats spriteStats = new Stats();
+        int imagesWithSprite = countSpriteImages(imageFiles, annotations);
 
         for (File file : imageFiles) {
             List<Annotation> imageAnnotations = annotations.get(file.getName());
@@ -177,19 +181,15 @@ final class TemplateModel {
                 continue;
             }
             try {
-                for (String label : Annotation.LABELS) {
-                    Detection detection = detector.findBestForLabel(bitmap, config, label, false);
-                    if (detection == null) {
+                Detection detection = detector.findBestForLabel(bitmap, config, Annotation.LABEL_SPRITE, false);
+                for (Annotation annotation : imageAnnotations) {
+                    if (!Annotation.LABEL_SPRITE.equals(annotation.label)) {
                         continue;
                     }
-                    for (Annotation annotation : imageAnnotations) {
-                        if (!annotation.label.equals(label)) {
-                            continue;
-                        }
-                        Stats stat = stats.get(LabelKey.from(label));
-                        stat.count++;
-                        stat.totalScore += detection.confidence;
-                        stat.totalIou += iou(annotation.box, detection.box);
+                    spriteStats.count++;
+                    if (detection != null) {
+                        spriteStats.totalScore += detection.confidence;
+                        spriteStats.totalIou += iou(annotation.box, detection.box);
                     }
                 }
             } finally {
@@ -197,30 +197,76 @@ final class TemplateModel {
             }
         }
 
+        int spriteSamples = countForLabel(Annotation.LABEL_SPRITE);
+        int remainingImages = recommendedAdditionalSpriteImages(imageFiles, annotations);
+        float avgScore = spriteStats.count == 0 ? 0f : spriteStats.totalScore / spriteStats.count;
+        float avgIou = spriteStats.count == 0 ? 0f : spriteStats.totalIou / spriteStats.count;
+
         StringBuilder builder = new StringBuilder();
+        builder.append("训练结果说明：\n");
         builder.append(String.format(
                 Locale.US,
-                "trained samples: sprite=%d reticle=%d ball_button=%d%n",
-                countForLabel(Annotation.LABEL_SPRITE),
-                countForLabel(Annotation.LABEL_RETICLE),
-                countForLabel(Annotation.LABEL_BALL_BUTTON)));
-        builder.append("self-check on training images:\n");
-        for (LabelKey key : LabelKey.values()) {
-            Stats stat = stats.get(key);
-            if (stat.count == 0) {
-                builder.append(key.label).append(": no labels\n");
-            } else {
-                builder.append(String.format(
-                        Locale.US,
-                        "%s: boxes=%d avg_score=%.3f avg_iou=%.3f%n",
-                        key.label,
-                        stat.count,
-                        stat.totalScore / stat.count,
-                        stat.totalIou / stat.count));
+                "精灵样本数：%d 个。每个样本来自你框选的一只精灵，样本越覆盖不同背景、角度和亮度，识别越稳。\n",
+                spriteSamples));
+        builder.append(String.format(
+                Locale.US,
+                "已标注图片数：%d 张。建议至少 %d 张不同截图；当前还建议补 %d 张。\n",
+                imagesWithSprite,
+                RECOMMENDED_SPRITE_IMAGES,
+                remainingImages));
+        if (spriteStats.count == 0) {
+            builder.append("训练自检：没有可用于自检的精灵标注，请先保存至少 1 个精灵框。\n");
+        } else {
+            builder.append(String.format(
+                    Locale.US,
+                    "平均匹配分 avg_score：%.3f。越接近 1 越像训练样本；低于最低匹配分时运行中会认为没识别到。\n",
+                    avgScore));
+            builder.append(String.format(
+                    Locale.US,
+                    "平均重合度 avg_iou：%.3f。越接近 1 表示预测框越贴近你手工框；低于 0.5 通常说明框选或样本差异需要检查。\n",
+                    avgIou));
+        }
+        builder.append(String.format(
+                Locale.US,
+                "最低匹配分阈值：%.2f。误识别多就调高，识别不到就略降。\n",
+                config.templateMinScore));
+        builder.append(String.format(
+                Locale.US,
+                "扫描步长：%d px。数值越小越细、越慢；越大越快、越容易跳过目标。\n",
+                config.templateStridePx));
+        builder.append(String.format(
+                Locale.US,
+                "扫描最长边：%d px。运行时会把截图缩放到这个上限再找精灵，越大越准但越耗时。\n",
+                config.templateMaxSidePx));
+        builder.append("准星和扔球键：不参与训练，只使用主界面的 X/Y 坐标标定。\n");
+        builder.append("模型文件：").append(modelFile(context).getAbsolutePath()).append('\n');
+        builder.append("报告文件：").append(reportFile(context).getAbsolutePath());
+        return builder.toString();
+    }
+
+    int countSpriteImages(List<File> imageFiles, Map<String, List<Annotation>> annotations) {
+        int count = 0;
+        for (File file : imageFiles) {
+            List<Annotation> imageAnnotations = annotations.get(file.getName());
+            if (imageAnnotations == null) {
+                continue;
+            }
+            for (Annotation annotation : imageAnnotations) {
+                if (Annotation.LABEL_SPRITE.equals(annotation.label)) {
+                    count++;
+                    break;
+                }
             }
         }
-        builder.append("model: ").append(modelFile(context).getAbsolutePath());
-        return builder.toString();
+        return count;
+    }
+
+    int recommendedAdditionalSpriteImages(List<File> imageFiles, Map<String, List<Annotation>> annotations) {
+        return Math.max(0, RECOMMENDED_SPRITE_IMAGES - countSpriteImages(imageFiles, annotations));
+    }
+
+    static int recommendedSpriteImages() {
+        return RECOMMENDED_SPRITE_IMAGES;
     }
 
     void saveReport(Context context, String report) throws IOException {
@@ -257,7 +303,7 @@ final class TemplateModel {
             }
         }
         return new Sample(
-                annotation.label,
+                Annotation.LABEL_SPRITE,
                 bitmap.getWidth(),
                 bitmap.getHeight(),
                 box.left,
@@ -322,28 +368,6 @@ final class TemplateModel {
 
         float normalizedHeight() {
             return Math.max(1f, bottom - top) / Math.max(1, sourceHeight);
-        }
-    }
-
-    private enum LabelKey {
-        SPRITE(Annotation.LABEL_SPRITE),
-        RETICLE(Annotation.LABEL_RETICLE),
-        BALL_BUTTON(Annotation.LABEL_BALL_BUTTON);
-
-        final String label;
-
-        LabelKey(String label) {
-            this.label = label;
-        }
-
-        static LabelKey from(String label) {
-            if (Annotation.LABEL_RETICLE.equals(label)) {
-                return RETICLE;
-            }
-            if (Annotation.LABEL_BALL_BUTTON.equals(label)) {
-                return BALL_BUTTON;
-            }
-            return SPRITE;
         }
     }
 

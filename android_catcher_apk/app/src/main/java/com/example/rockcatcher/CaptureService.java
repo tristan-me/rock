@@ -196,11 +196,15 @@ public final class CaptureService extends Service {
         float endY = clamp(ball.centerY() + stepY, 0, result.frameHeight - 1);
         String status = String.format(
                 Locale.US,
-                "%s dist=%.1f step=(%.0f,%.0f)",
-                armed ? "armed" : "dry",
+                "%s dist=%.1f step=(%.0f,%.0f) ball=(%.0f,%.0f)->(%.0f,%.0f)",
+                armed ? "armed" : "dry-run only",
                 distance,
                 stepX,
-                stepY);
+                stepY,
+                ball.centerX(),
+                ball.centerY(),
+                endX,
+                endY);
 
         if (armed) {
             long now = System.currentTimeMillis();

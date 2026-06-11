@@ -58,13 +58,13 @@ public final class TrainerActivity extends Activity {
         root.setPadding(dp(12), dp(12), dp(12), dp(12));
 
         TextView title = new TextView(this);
-        title.setText("Rock Catcher Trainer");
+        title.setText("Rock Catcher 精灵训练与坐标标定");
         title.setTextSize(22f);
         title.setGravity(Gravity.START);
         root.addView(title);
 
         statusView = new TextView(this);
-        statusView.setText("idle");
+        statusView.setText("先导入截图，框选精灵用于训练；准星和扔球键只标定中心坐标。");
         statusView.setTextIsSelectable(true);
         statusView.setPadding(0, dp(4), 0, dp(8));
         root.addView(statusView);
@@ -81,12 +81,13 @@ public final class TrainerActivity extends Activity {
 
         LinearLayout labelRow = row();
         addButton(labelRow, "标精灵", v -> setLabel(Annotation.LABEL_SPRITE));
-        addButton(labelRow, "标准星", v -> setLabel(Annotation.LABEL_RETICLE));
-        addButton(labelRow, "标扔球键", v -> setLabel(Annotation.LABEL_BALL_BUTTON));
+        addButton(labelRow, "标定准星", v -> setLabel(Annotation.LABEL_RETICLE));
+        addButton(labelRow, "标定扔球键", v -> setLabel(Annotation.LABEL_BALL_BUTTON));
         root.addView(labelRow);
 
         annotationView = new AnnotationView(this);
-        annotationView.setChangeListener(() -> updateStatus("changed, remember to save"));
+        annotationView.setChangeListener(() -> updateStatus("精灵标注已变更，记得保存。"));
+        annotationView.setBoxListener(this::handleBoxCreated);
         root.addView(annotationView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -161,6 +162,7 @@ public final class TrainerActivity extends Activity {
         imageFiles.clear();
         imageFiles.addAll(store.listImages());
         annotations = store.loadAnnotations();
+        removeCalibrationAnnotations();
         if (currentIndex >= imageFiles.size()) {
             currentIndex = Math.max(0, imageFiles.size() - 1);
         }
@@ -180,6 +182,7 @@ public final class TrainerActivity extends Activity {
         if (imageFiles.isEmpty()) {
             imageView.setText("未导入图片");
             annotationView.setBitmap(null, new ArrayList<>());
+            annotationView.setCalibrationMarks(new ArrayList<>());
             return;
         }
         File file = imageFiles.get(currentIndex);
@@ -187,25 +190,37 @@ public final class TrainerActivity extends Activity {
         if (currentBitmap == null) {
             imageView.setText("无法读取: " + file.getName());
             annotationView.setBitmap(null, new ArrayList<>());
+            annotationView.setCalibrationMarks(new ArrayList<>());
             return;
         }
         List<Annotation> list = annotationsFor(file);
         annotationView.setBitmap(currentBitmap, list);
+        annotationView.setCalibrationMarks(calibrationMarks());
         annotationView.setCurrentLabel(currentLabel);
         imageView.setText(String.format(
                 Locale.US,
-                "%d/%d %s  %dx%d  labels=%d  current=%s",
+                "%d/%d %s  %dx%d  精灵框=%d  当前=%s",
                 currentIndex + 1,
                 imageFiles.size(),
                 file.getName(),
                 currentBitmap.getWidth(),
                 currentBitmap.getHeight(),
-                list.size(),
+                countLabel(list, Annotation.LABEL_SPRITE),
                 currentLabel));
     }
 
     private List<Annotation> annotationsFor(File file) {
         return annotations.computeIfAbsent(file.getName(), key -> new ArrayList<>());
+    }
+
+    private void removeCalibrationAnnotations() {
+        for (List<Annotation> list : annotations.values()) {
+            for (int i = list.size() - 1; i >= 0; i--) {
+                if (!Annotation.LABEL_SPRITE.equals(list.get(i).label)) {
+                    list.remove(i);
+                }
+            }
+        }
     }
 
     private void setLabel(String label) {
@@ -215,16 +230,45 @@ public final class TrainerActivity extends Activity {
     }
 
     private void showCurrentStatus() {
-        updateStatus("current label: " + currentLabel);
+        if (Annotation.LABEL_SPRITE.equals(currentLabel)) {
+            updateStatus("当前：框选精灵。只有精灵会参与训练。");
+        } else if (Annotation.LABEL_RETICLE.equals(currentLabel)) {
+            updateStatus("当前：标定准星。点一下或拖一个小框，会把中心坐标写入主界面的准星 X/Y。");
+        } else {
+            updateStatus("当前：标定扔球键。点一下或拖一个小框，会把中心坐标写入主界面的扔球键 X/Y。");
+        }
         if (!imageFiles.isEmpty()) {
             showCurrent();
         }
     }
 
+    private boolean handleBoxCreated(Annotation annotation) {
+        if (Annotation.LABEL_SPRITE.equals(annotation.label)) {
+            return true;
+        }
+        float centerX = annotation.box.centerX();
+        float centerY = annotation.box.centerY();
+        SharedPreferences.Editor editor = prefs.edit();
+        if (Annotation.LABEL_RETICLE.equals(annotation.label)) {
+            editor.putString("reticle_x", String.format(Locale.US, "%.0f", centerX));
+            editor.putString("reticle_y", String.format(Locale.US, "%.0f", centerY));
+            editor.apply();
+            annotationView.setCalibrationMarks(calibrationMarks());
+            updateStatus(String.format(Locale.US, "准星已标定到 X=%.0f, Y=%.0f；它不会参与训练。", centerX, centerY));
+            return false;
+        }
+        editor.putString("ball_x", String.format(Locale.US, "%.0f", centerX));
+        editor.putString("ball_y", String.format(Locale.US, "%.0f", centerY));
+        editor.apply();
+        annotationView.setCalibrationMarks(calibrationMarks());
+        updateStatus(String.format(Locale.US, "扔球键已标定到 X=%.0f, Y=%.0f；它不会参与训练。", centerX, centerY));
+        return false;
+    }
+
     private void saveAnnotations() {
         try {
             store.saveAnnotations(annotations);
-            updateStatus("annotations saved: " + store.getAnnotationsFile().getAbsolutePath());
+            updateStatus("精灵标注已保存: " + store.getAnnotationsFile().getAbsolutePath());
         } catch (IOException ex) {
             updateStatus("save failed: " + ex.getMessage());
         }
@@ -242,7 +286,7 @@ public final class TrainerActivity extends Activity {
             File file = imageFiles.get(currentIndex);
             List<Annotation> list = annotationsFor(file);
             int added = 0;
-            for (String label : Annotation.LABELS) {
+            for (String label : Annotation.TRAINABLE_LABELS) {
                 if (hasLabel(list, label)) {
                     continue;
                 }
@@ -253,9 +297,10 @@ public final class TrainerActivity extends Activity {
                 }
             }
             annotationView.setBitmap(currentBitmap, list);
-            updateStatus("auto suggestions added: " + added);
+            annotationView.setCalibrationMarks(calibrationMarks());
+            updateStatus("自动建议精灵框: " + added + " 个。准星和扔球键请手动标定位置。");
         } catch (IOException ex) {
-            updateStatus("auto suggest needs at least one saved sprite label");
+            updateStatus("自动建议需要至少 1 个已保存的精灵框。");
         }
     }
 
@@ -275,10 +320,35 @@ public final class TrainerActivity extends Activity {
             model.save(this);
             String report = model.buildReport(this, imageFiles, annotations);
             model.saveReport(this, report);
-            updateStatus("training complete\n" + report);
+            updateStatus("训练完成\n" + report);
         } catch (IOException ex) {
             updateStatus("training failed: " + ex.getMessage());
         }
+    }
+
+    private int countLabel(List<Annotation> list, String label) {
+        int count = 0;
+        for (Annotation annotation : list) {
+            if (annotation.label.equals(label)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private List<Annotation> calibrationMarks() {
+        ArrayList<Annotation> marks = new ArrayList<>();
+        float reticleX = CatchConfig.getFloat(prefs, "reticle_x", 960f);
+        float reticleY = CatchConfig.getFloat(prefs, "reticle_y", 540f);
+        float ballX = CatchConfig.getFloat(prefs, "ball_x", 1720f);
+        float ballY = CatchConfig.getFloat(prefs, "ball_y", 860f);
+        marks.add(new Annotation(Annotation.LABEL_RETICLE, centeredBox(reticleX, reticleY, 18f)));
+        marks.add(new Annotation(Annotation.LABEL_BALL_BUTTON, centeredBox(ballX, ballY, 36f)));
+        return marks;
+    }
+
+    private RectF centeredBox(float centerX, float centerY, float radius) {
+        return new RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius);
     }
 
     private void recycleCurrentBitmap() {

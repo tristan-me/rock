@@ -18,6 +18,10 @@ final class AnnotationView extends View {
         void onAnnotationsChanged();
     }
 
+    interface BoxListener {
+        boolean onBoxCreated(Annotation annotation);
+    }
+
     private final Paint bitmapPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint boxPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -27,11 +31,13 @@ final class AnnotationView extends View {
 
     private Bitmap bitmap;
     private List<Annotation> annotations = new ArrayList<>();
+    private List<Annotation> calibrationMarks = new ArrayList<>();
     private String currentLabel = Annotation.LABEL_SPRITE;
     private RectF dragBox;
     private float downX;
     private float downY;
     private ChangeListener changeListener;
+    private BoxListener boxListener;
 
     AnnotationView(Context context) {
         super(context);
@@ -51,10 +57,19 @@ final class AnnotationView extends View {
         this.changeListener = listener;
     }
 
+    void setBoxListener(BoxListener listener) {
+        this.boxListener = listener;
+    }
+
     void setBitmap(Bitmap bitmap, List<Annotation> annotations) {
         this.bitmap = bitmap;
         this.annotations = annotations == null ? new ArrayList<>() : annotations;
         this.dragBox = null;
+        invalidate();
+    }
+
+    void setCalibrationMarks(List<Annotation> marks) {
+        this.calibrationMarks = marks == null ? new ArrayList<>() : marks;
         invalidate();
     }
 
@@ -83,6 +98,9 @@ final class AnnotationView extends View {
         canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint);
         for (Annotation annotation : annotations) {
             drawAnnotation(canvas, annotation);
+        }
+        for (Annotation annotation : calibrationMarks) {
+            drawBox(canvas, annotation.box, annotation.label, "calibrated " + annotation.label);
         }
         if (dragBox != null) {
             drawBox(canvas, dragBox, currentLabel, "new " + currentLabel);
@@ -134,9 +152,13 @@ final class AnnotationView extends View {
             box.set(downX - radius, downY - radius, downX + radius, downY + radius);
         }
         clampBox(box);
-        annotations.add(new Annotation(currentLabel, box));
+        Annotation annotation = new Annotation(currentLabel, box);
+        boolean storeAnnotation = boxListener == null || boxListener.onBoxCreated(annotation);
+        if (storeAnnotation) {
+            annotations.add(annotation);
+            notifyChanged();
+        }
         dragBox = null;
-        notifyChanged();
         invalidate();
     }
 

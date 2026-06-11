@@ -8,6 +8,7 @@ final class Annotation {
     static final String LABEL_RETICLE = "reticle";
     static final String LABEL_BALL_BUTTON = "ball_button";
     static final String[] LABELS = {LABEL_SPRITE, LABEL_RETICLE, LABEL_BALL_BUTTON};
+    static final String[] TRAINABLE_LABELS = {LABEL_SPRITE};
 
     final String label;
     final RectF box;

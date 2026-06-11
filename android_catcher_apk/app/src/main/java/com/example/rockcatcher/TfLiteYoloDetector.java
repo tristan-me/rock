@@ -167,7 +167,7 @@ final class TfLiteYoloDetector implements AutoCloseable {
         boolean channelFirst = dimA <= 32 && dimB > dimA;
         int boxes = channelFirst ? dimB : dimA;
         int channels = channelFirst ? dimA : dimB;
-        if (channels < 4 + LABELS.length) {
+        if (channels < 5) {
             result.status = "output has too few channels";
             return;
         }
@@ -178,13 +178,17 @@ final class TfLiteYoloDetector implements AutoCloseable {
             float cy = value(output, channelFirst, i, 1);
             float w = value(output, channelFirst, i, 2);
             float h = value(output, channelFirst, i, 3);
-            boolean hasObjectness = channels >= 5 + LABELS.length;
+            boolean hasObjectness = channels == 6 || channels >= 5 + LABELS.length;
             float objectness = hasObjectness ? value(output, channelFirst, i, 4) : 1f;
             int classStart = hasObjectness ? 5 : 4;
+            int classCount = Math.min(LABELS.length, channels - classStart);
+            if (classCount <= 0) {
+                continue;
+            }
 
             int bestClass = -1;
             float bestScore = 0f;
-            for (int cls = 0; cls < LABELS.length; cls++) {
+            for (int cls = 0; cls < classCount; cls++) {
                 float score = objectness * value(output, channelFirst, i, classStart + cls);
                 if (score > bestScore) {
                     bestScore = score;
@@ -205,12 +209,7 @@ final class TfLiteYoloDetector implements AutoCloseable {
         if (best[0] != null) {
             result.sprite = best[0];
         }
-        if (best[1] != null) {
-            result.reticle = best[1];
-        }
-        if (best[2] != null) {
-            result.ballButton = best[2];
-        }
+        // Reticle and ball button are calibration points, not trained targets.
     }
 
     private float value(float[][] output, boolean channelFirst, int box, int channel) {

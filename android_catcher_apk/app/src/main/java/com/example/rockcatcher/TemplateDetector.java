@@ -44,17 +44,8 @@ final class TemplateDetector {
             return modelStatus;
         }
         Detection sprite = findBestForLabel(source, config, Annotation.LABEL_SPRITE, true);
-        Detection reticle = findBestForLabel(source, config, Annotation.LABEL_RETICLE, true);
-        Detection ball = findBestForLabel(source, config, Annotation.LABEL_BALL_BUTTON, true);
-
         if (sprite != null) {
             result.sprite = sprite;
-        }
-        if (reticle != null) {
-            result.reticle = reticle;
-        }
-        if (ball != null) {
-            result.ballButton = ball;
         }
 
         return String.format(
