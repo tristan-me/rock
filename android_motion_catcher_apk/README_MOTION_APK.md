@@ -1,0 +1,80 @@
+# Motion Catcher APK
+
+这是一个独立 Android APK 工程，目录为 `android_motion_catcher_apk`，没有修改现有 `android_catcher_apk` 或 `android_api_catcher_apk`。
+
+它的控制流程和旧版大致一致：
+
+- `MediaProjection` 持续截屏。
+- `AccessibilityService` 在你手动启用后执行滑动手势。
+- 悬浮条提供 `抓捕`、`暂停`、`停止`、`录制`。
+- 准星和丢球键仍然用固定屏幕坐标标定。
+
+不同点是：本版本不使用 YOLO、不需要 `model.tflite`、不需要训练数据。它会观察连续画面，把几秒内从一个位置大幅移动到另一个位置的紧凑运动像素块判定为精灵。
+
+## 运动识别思路
+
+`MotionSpriteDetector` 每隔一段时间采样屏幕网格：
+
+1. 对采样颜色做亮度归一化，减少整体光影变化造成的误判。
+2. 用相邻帧差异找出运动像素块，并过滤过大的全屏变化、转场、强光影闪烁。
+3. 把紧凑的运动块连成 blob，再在几秒历史窗口内跟踪轨迹。
+4. 如果某条轨迹移动距离超过阈值、持续帧数足够、形状不太像全屏环境变化，就输出为 `sprite`。
+5. 精灵转身导致颜色变了也不会立刻丢弃轨迹，因为相邻帧连接主要看位置连续性，颜色只作为弱约束。
+
+## 构建
+
+本目录提供不依赖 Gradle wrapper 的构建脚本。脚本会优先使用本目录 `.android-sdk`，没有的话会复用仓库中已有 APK 工程的 Android SDK 工具链。
+
+```powershell
+cd D:\rock\android_motion_catcher_apk
+powershell -ExecutionPolicy Bypass -File .\build_apk.ps1
+```
+
+构建成功后 APK 位于：
+
+```text
+D:\rock\android_motion_catcher_apk\app\build\outputs\apk\debug\app-debug.apk
+```
+
+## 安装
+
+如果继续使用仓库已有 Android SDK 的 adb：
+
+```powershell
+D:\rock\android_catcher_apk\.android-sdk\platform-tools\adb.exe install -r D:\rock\android_motion_catcher_apk\app\build\outputs\apk\debug\app-debug.apk
+```
+
+安装后应用名是 `Motion Catcher`，包名是 `com.example.rockcatchermotion`，可以和旧版 `Rock Catcher` 同时存在。
+
+## 使用流程
+
+1. 打开 `Motion Catcher`。
+2. 点 `打开无障碍设置`，启用 `Motion Catcher Gestures`。
+3. 回到应用，点 `启动悬浮条 / 准备接管`，同意系统截屏授权。
+4. 进入游戏。
+5. 如果还没标定坐标，先用悬浮条点 `录制` 保存当前画面。
+6. 回到应用，点 `标定准星 / 丢球键`，选择刚录制的截图，分别点准星中心和丢球键中心。
+7. 再进游戏，用悬浮条：
+   - `抓捕`：开始发送滑动手势。
+   - `暂停`：继续识别，但不控制手机。
+   - `停止`：结束截屏和接管服务。
+   - `录制`：保存当前画面，方便重新标定或排查识别。
+
+录制截图会保存到应用外部文件目录的 `motion_frames` 文件夹，主界面会显示实际路径。
+
+## 常用调参
+
+- `采样步长 px`：默认 `14`。识别不稳可调小，例如 `10`；手机发热或卡顿可调大。
+- `运动阈值`：默认 `20`。误报多就调高；识别不到就调低。
+- `全屏变化过滤`：默认 `0.55`。强光影或转场误报多就调低；镜头运动时经常不识别就调高。
+- `观察历史 ms`：默认 `3500`。精灵移动慢就调大。
+- `几秒内最小移动距离 px`：默认 `180`。误报多调高；精灵小幅移动也要抓就调低。
+- `相邻帧轨迹连接距离 px`：默认 `240`。精灵移动很快或帧率低就调高。
+- `最低轨迹分`：默认 `0.52`。误报多调高；漏检多调低。
+- `忽略准星半径`、`忽略丢球键半径`：用于避免准星和按键自身动画被识别成精灵。
+- `X/Y 方向`：如果滑动方向反了，把对应方向从 `1` 改成 `-1`。
+- `X/Y 灵敏度`、`最大滑动步长 px`：用来控制每次拖动丢球键的幅度。
+
+## 注意
+
+这个版本是本地视觉和手势原型，不包含绕过检测、防封、注入、改包、读内存或批量账号功能。运动像素方案依赖场景表现，第一次使用建议先用 `暂停` 状态观察主界面状态文本，再进入 `抓捕`。

@@ -1,0 +1,7 @@
+.android-sdk/
+.downloads/
+.gradle-dist/
+.gradle/
+manual-build/
+app/build/
+local.properties

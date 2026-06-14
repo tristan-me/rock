@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Motion Catcher</string>
+    <string name="accessibility_service_label">Motion Catcher Gestures</string>
+    <string name="accessibility_description">允许 Motion Catcher 在你明确启用后执行屏幕滑动手势。</string>
+</resources>
