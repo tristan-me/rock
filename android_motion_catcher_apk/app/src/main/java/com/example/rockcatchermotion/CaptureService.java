@@ -64,6 +64,8 @@ public final class CaptureService extends Service {
     private volatile boolean recordNextFrame = false;
     private long lastGestureMs = 0L;
     private long lastProcessMs = 0L;
+    private float smoothedStepX = 0f;
+    private float smoothedStepY = 0f;
     private Bitmap latestBitmap;
 
     @Override
@@ -177,6 +179,11 @@ public final class CaptureService extends Service {
             }
             CatchConfig config = CatchConfig.from(prefs);
             long now = System.currentTimeMillis();
+            if (armed && lastGestureMs > 0L && now - lastGestureMs < config.postGestureSettleMs) {
+                emit("手势后等待画面稳定 " + (config.postGestureSettleMs - (now - lastGestureMs)) + "ms");
+                bitmap.recycle();
+                return;
+            }
             if (now - lastProcessMs >= config.frameIntervalMs) {
                 lastProcessMs = now;
                 processFrame(bitmap, config);
@@ -208,6 +215,7 @@ public final class CaptureService extends Service {
     private void processFrame(Bitmap bitmap, CatchConfig config) {
         DetectionResult result = detector.detect(bitmap, config);
         if (!result.hasTarget()) {
+            decaySmoothedStep();
             emit((armed ? "抓捕中 " : "待命 ") + result.status);
             return;
         }
@@ -229,6 +237,17 @@ public final class CaptureService extends Service {
             stepX = 0f;
             stepY = 0f;
         }
+        float follow = 1f - config.aimSmoothing;
+        smoothedStepX = smoothedStepX * config.aimSmoothing + stepX * follow;
+        smoothedStepY = smoothedStepY * config.aimSmoothing + stepY * follow;
+        if (Math.abs(smoothedStepX) < 1f) {
+            smoothedStepX = 0f;
+        }
+        if (Math.abs(smoothedStepY) < 1f) {
+            smoothedStepY = 0f;
+        }
+        stepX = smoothedStepX;
+        stepY = smoothedStepY;
 
         float endX = clamp(ball.centerX() + stepX, 0, result.frameWidth - 1);
         float endY = clamp(ball.centerY() + stepY, 0, result.frameHeight - 1);
@@ -249,7 +268,9 @@ public final class CaptureService extends Service {
             long now = System.currentTimeMillis();
             if (!CatchAccessibilityService.isReady()) {
                 status += " accessibility disabled";
-            } else if (now - lastGestureMs >= config.gestureDurationMs + 120L) {
+            } else if (Math.hypot(stepX, stepY) < 2.5f) {
+                status += " no gesture: aim settled";
+            } else if (now - lastGestureMs >= config.gestureDurationMs + config.gestureGapMs) {
                 boolean sent = CatchAccessibilityService.performSwipe(
                         ball.centerX(),
                         ball.centerY(),
@@ -261,6 +282,17 @@ public final class CaptureService extends Service {
             }
         }
         emit(status);
+    }
+
+    private void decaySmoothedStep() {
+        smoothedStepX *= 0.65f;
+        smoothedStepY *= 0.65f;
+        if (Math.abs(smoothedStepX) < 1f) {
+            smoothedStepX = 0f;
+        }
+        if (Math.abs(smoothedStepY) < 1f) {
+            smoothedStepY = 0f;
+        }
     }
 
     private float clamp(float value, float min, float max) {

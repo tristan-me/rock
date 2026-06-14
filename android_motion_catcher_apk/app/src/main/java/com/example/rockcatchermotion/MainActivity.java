@@ -36,6 +36,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        CatchConfig.upgradeDefaults(prefs);
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 20);
         }
@@ -76,7 +77,7 @@ public final class MainActivity extends Activity {
 
         TextView note = new TextView(this);
         note.setText("这个版本不用 YOLO 和训练模型。它持续观察屏幕，把几秒内从一个位置移动到另一个位置的紧凑运动像素块当作精灵；亮度变化会被归一化，转身导致的颜色变化会通过轨迹连续性容忍。\n\n"
-                + "先开启无障碍手势，再启动悬浮条并同意截屏授权。进游戏后用悬浮条的“抓捕 / 暂停 / 录制”。");
+                + "先开启无障碍手势，再启动悬浮条并同意截屏授权。进游戏后用悬浮条的“抓捕 / 暂停 / 标定”。");
         note.setPadding(0, dp(8), 0, dp(12));
         root.addView(note);
 
@@ -109,13 +110,16 @@ public final class MainActivity extends Activity {
         addField(root, "gain_x", "X 灵敏度", "0.65");
         addField(root, "gain_y", "Y 灵敏度", "0.65");
         addField(root, "direction_x", "X 方向：反了就填 -1", "1");
-        addField(root, "direction_y", "Y 方向：反了就填 -1", "1");
-        addField(root, "max_step", "最大滑动步长 px", "120");
+        addField(root, "direction_y", "Y 方向：反了就填 1", "-1");
+        addField(root, "max_step", "最大滑动步长 px", "70");
         addField(root, "release_radius", "准星接近精灵时的停止半径 px", "28");
-        addField(root, "gesture_ms", "手势时长 ms", "420");
+        addField(root, "gesture_ms", "手势时长 ms", "520");
+        addField(root, "gesture_gap_ms", "两次手势间隔 ms", "220");
+        addField(root, "post_gesture_settle_ms", "手势后画面稳定等待 ms", "160");
+        addField(root, "aim_smoothing", "瞄准平滑 0-0.95：大更稳，小更灵敏", "0.55");
 
         addSection(root, "运动识别");
-        addField(root, "frame_interval_ms", "识别间隔 ms", "120");
+        addField(root, "frame_interval_ms", "识别间隔 ms", "100");
         addField(root, "sample_stride", "采样步长 px：小更准，大更快", "14");
         addField(root, "motion_threshold", "运动阈值：误报多就调高", "20");
         addField(root, "global_change_limit", "全屏变化过滤：光影/转场误报多就调低", "0.55");

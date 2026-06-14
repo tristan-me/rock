@@ -20,6 +20,7 @@ public final class CatchAccessibilityService extends AccessibilityService {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private GestureOverlayView overlayView;
+    private LiveCalibrationOverlayView calibrationOverlayView;
     private FloatingControlBar controlBar;
     private WindowManager.LayoutParams controlParams;
     private SharedPreferences prefs;
@@ -51,6 +52,7 @@ public final class CatchAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        CatchConfig.upgradeDefaults(prefs);
         mainHandler.post(() -> {
             ensureGestureOverlay();
             ensureControlBar();
@@ -131,6 +133,11 @@ public final class CatchAccessibilityService extends AccessibilityService {
 
             @Override
             public void onRecord() {
+                toggleCalibrationOverlay();
+            }
+
+            @Override
+            public void onSaveFrame() {
                 sendCaptureAction(CaptureService.ACTION_RECORD);
             }
 
@@ -177,7 +184,62 @@ public final class CatchAccessibilityService extends AccessibilityService {
         }
     }
 
+    private void toggleCalibrationOverlay() {
+        mainHandler.post(() -> {
+            if (calibrationOverlayView != null) {
+                removeCalibrationOverlay();
+            } else {
+                ensureCalibrationOverlay();
+            }
+        });
+    }
+
+    private void ensureCalibrationOverlay() {
+        if (calibrationOverlayView != null) {
+            return;
+        }
+        if (windowManager == null) {
+            windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        }
+        if (windowManager == null) {
+            return;
+        }
+        calibrationOverlayView = new LiveCalibrationOverlayView(this);
+        calibrationOverlayView.setListener(new LiveCalibrationOverlayView.Listener() {
+            @Override
+            public void onDone() {
+                removeCalibrationOverlay();
+            }
+
+            @Override
+            public void onStatus(String status) {
+                Toast.makeText(CatchAccessibilityService.this, status, Toast.LENGTH_SHORT).show();
+            }
+        });
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        params.gravity = Gravity.TOP | Gravity.START;
+        windowManager.addView(calibrationOverlayView, params);
+        Toast.makeText(this, "拖动准星和丢球键，完成后点上方“完成”", Toast.LENGTH_LONG).show();
+    }
+
+    private void removeCalibrationOverlay() {
+        if (calibrationOverlayView != null) {
+            if (windowManager != null) {
+                windowManager.removeView(calibrationOverlayView);
+            }
+            calibrationOverlayView = null;
+        }
+    }
+
     private void removeOverlay() {
+        removeCalibrationOverlay();
         if (overlayView != null) {
             overlayView.clear();
             if (windowManager != null) {

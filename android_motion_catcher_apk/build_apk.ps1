@@ -28,6 +28,7 @@ $ApkSigner = Join-Path $BuildTools "apksigner.bat"
 $Build = Join-Path $Root "manual-build"
 $OutDir = Join-Path $Root "app\build\outputs\apk\debug"
 $FinalApk = Join-Path $OutDir "app-debug.apk"
+$Keystore = Join-Path $Root "debug.keystore"
 
 function Assert-LastExit($Name) {
     if ($LASTEXITCODE -ne 0) {
@@ -60,8 +61,8 @@ Assert-LastExit "aapt2 compile"
     --auto-add-overlay `
     --min-sdk-version 26 `
     --target-sdk-version 35 `
-    --version-code 1 `
-    --version-name 0.1.0
+    --version-code 2 `
+    --version-name 0.2.0
 Assert-LastExit "aapt2 link"
 
 $ClassesDir = Join-Path $Build "classes"
@@ -98,7 +99,6 @@ $AlignedApk = Join-Path $Build "aligned.apk"
 & $Zipalign -f 4 $BaseApk $AlignedApk
 Assert-LastExit "zipalign"
 
-$Keystore = Join-Path $Build "debug.keystore"
 if (-not (Test-Path -LiteralPath $Keystore)) {
     keytool -genkeypair `
         -keystore $Keystore `
