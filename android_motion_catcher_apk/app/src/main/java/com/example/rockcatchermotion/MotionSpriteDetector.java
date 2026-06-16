@@ -53,8 +53,12 @@ final class MotionSpriteDetector {
         DetectionResult result = new DetectionResult();
         result.frameWidth = width;
         result.frameHeight = height;
-        result.reticle = fixed("reticle", config.fallbackReticleX, config.fallbackReticleY, 18f);
-        result.ballButton = fixed("ball", config.fallbackBallX, config.fallbackBallY, 36f);
+        float reticleX = clamp(resolvedReticleX(config, width), 0, width - 1);
+        float reticleY = clamp(resolvedReticleY(config, height), 0, height - 1);
+        float ballX = clamp(resolvedBallX(config, width), 0, width - 1);
+        float ballY = clamp(resolvedBallY(config, height), 0, height - 1);
+        result.reticle = fixed("reticle", reticleX, reticleY, 18f);
+        result.ballButton = fixed("ball", ballX, ballY, 36f);
 
         int[] currR = new int[total];
         int[] currG = new int[total];
@@ -177,6 +181,10 @@ final class MotionSpriteDetector {
         ArrayList<Blob> fusedBlobs = fuseBlobs(blobs, appearanceBlobs);
         updateTracks(fusedBlobs, now, config);
         Candidate best = findBestCandidate(now, config);
+        Candidate presence = findDarkPresenceCandidate(now, config);
+        if (best == null && presence != null) {
+            best = presence;
+        }
         if (best == null && appearanceShift != null) {
             best = appearanceShift;
         }
@@ -290,6 +298,47 @@ final class MotionSpriteDetector {
             }
             if (score >= threshold && (best == null || score > best.score)) {
                 best = new Candidate(track, score, jump);
+            }
+        }
+        return best;
+    }
+
+    private Candidate findDarkPresenceCandidate(long now, CatchConfig config) {
+        Candidate best = null;
+        for (Track track : tracks) {
+            if (track.updatedSerial != frameSerial || track.updates < 4 || track.lastBlob == null) {
+                continue;
+            }
+            Blob blob = track.lastBlob;
+            if (!looksLikeSmallDarkTarget(blob) || looksLikeSelfAvatar(blob)) {
+                continue;
+            }
+            float jump = track.maxJump(now, config.historyMs, 350);
+            long age = Math.max(1L, track.lastTimeMs - track.firstTimeInWindow());
+            boolean locallyAlive = blob.changeRatio >= 0.012f
+                    || blob.motion >= config.motionThreshold * 0.32f
+                    || jump >= Math.max(10f, config.minJumpPx * 0.10f);
+            if (!locallyAlive && track.updates < 7) {
+                continue;
+            }
+            float darknessScore = clamp01((94f - blob.avgLuma) / 58f);
+            float compactScore = blob.compactScore;
+            float updateScore = clamp01((track.updates - 3f) / 7f);
+            float ageScore = clamp01(age / 1600f);
+            float motionScore = clamp01(Math.max(blob.motion, blob.changeRatio * config.motionThreshold * 2.4f)
+                    / Math.max(1f, config.motionThreshold));
+            float travelScore = clamp01(jump / Math.max(1f, config.minJumpPx * 0.55f));
+            float regionScore = worldRegionScore(blob);
+            float score = darknessScore * 0.25f
+                    + compactScore * 0.20f
+                    + updateScore * 0.16f
+                    + ageScore * 0.12f
+                    + motionScore * 0.12f
+                    + travelScore * 0.08f
+                    + regionScore * 0.07f;
+            if (score >= Math.max(0.31f, config.minTrackScore - 0.09f)
+                    && (best == null || score > best.score)) {
+                best = new Candidate(track, score, jump, "dark-presence");
             }
         }
         return best;
@@ -796,12 +845,16 @@ final class MotionSpriteDetector {
         if (y < config.ignoreTopPx || y >= height - config.ignoreBottomPx) {
             return true;
         }
+        float reticleX = resolvedReticleX(config, width);
+        float reticleY = resolvedReticleY(config, height);
+        float ballX = resolvedBallX(config, width);
+        float ballY = resolvedBallY(config, height);
         if (config.ignoreReticleRadiusPx > 0
-                && distance(x, y, config.fallbackReticleX, config.fallbackReticleY) < config.ignoreReticleRadiusPx) {
+                && distance(x, y, reticleX, reticleY) < config.ignoreReticleRadiusPx) {
             return true;
         }
         return config.ignoreBallRadiusPx > 0
-                && distance(x, y, config.fallbackBallX, config.fallbackBallY) < config.ignoreBallRadiusPx;
+                && distance(x, y, ballX, ballY) < config.ignoreBallRadiusPx;
     }
 
     private boolean isAppearanceIgnored(int x, int y, int width, int height, CatchConfig config) {
@@ -811,6 +864,12 @@ final class MotionSpriteDetector {
         int topUi = Math.max(config.ignoreTopPx, Math.round(height * 0.13f));
         int bottomUi = Math.max(config.ignoreBottomPx, Math.round(height * 0.08f));
         if (y < topUi || y >= height - bottomUi) {
+            return true;
+        }
+        if (x < Math.round(width * 0.11f)) {
+            return true;
+        }
+        if (x > width - Math.round(width * 0.18f) && y > Math.round(height * 0.50f)) {
             return true;
         }
         return x > width - Math.round(width * 0.17f) && y < Math.round(height * 0.32f);
@@ -826,6 +885,40 @@ final class MotionSpriteDetector {
         boolean notBottomUi = prevFrameHeight <= 0 || blob.centerY < frameHeight * 0.78f;
         boolean colorOk = blueBias >= -18f || blob.avgLuma < 58f;
         return compactSmall && darkEnough && notBottomUi && colorOk;
+    }
+
+    private boolean looksLikeSelfAvatar(Blob blob) {
+        float frameWidth = Math.max(1f, prevFrameWidth);
+        float frameHeight = Math.max(1f, prevFrameHeight);
+        return blob.centerX > frameWidth * 0.38f
+                && blob.centerX < frameWidth * 0.62f
+                && blob.centerY > frameHeight * 0.50f;
+    }
+
+    private float worldRegionScore(Blob blob) {
+        float frameWidth = Math.max(1f, prevFrameWidth);
+        float frameHeight = Math.max(1f, prevFrameHeight);
+        float x = blob.centerX / frameWidth;
+        float y = blob.centerY / frameHeight;
+        float vertical = y >= 0.22f && y <= 0.74f ? 1f : 0.35f;
+        float horizontal = x >= 0.12f && x <= 0.84f ? 1f : 0.45f;
+        return vertical * horizontal;
+    }
+
+    private float resolvedReticleX(CatchConfig config, int width) {
+        return config.autoReticle ? width * 0.50f : config.fallbackReticleX;
+    }
+
+    private float resolvedReticleY(CatchConfig config, int height) {
+        return config.autoReticle ? height * 0.56f : config.fallbackReticleY;
+    }
+
+    private float resolvedBallX(CatchConfig config, int width) {
+        return config.autoBall ? width * 0.84f : config.fallbackBallX;
+    }
+
+    private float resolvedBallY(CatchConfig config, int height) {
+        return config.autoBall ? height * 0.84f : config.fallbackBallY;
     }
 
     private int integralSum(int[] integral, int gridWidth, int x0, int y0, int x1, int y1) {
@@ -1088,11 +1181,15 @@ final class MotionSpriteDetector {
         final String source;
 
         Candidate(Track track, float score, float jumpPx) {
+            this(track, score, jumpPx, "motion");
+        }
+
+        Candidate(Track track, float score, float jumpPx, String source) {
             this.track = track;
             this.blob = null;
             this.score = score;
             this.jumpPx = jumpPx;
-            this.source = "motion";
+            this.source = source;
         }
 
         Candidate(Blob blob, float score, float jumpPx, String source) {

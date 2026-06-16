@@ -135,8 +135,8 @@ public final class MainActivity extends Activity {
         addField(advancedPanel, "throw_tap_ms", "丢球点击时长 ms", "95");
         addField(advancedPanel, "throw_cooldown_ms", "丢球冷却 ms", "1300");
         addField(advancedPanel, "search_wait_ms", "无目标等待多久再探索 ms", "5000");
-        addField(advancedPanel, "search_step", "探索滑动距离 px", "220");
-        addField(advancedPanel, "search_gesture_ms", "探索手势时长 ms", "520");
+        addField(advancedPanel, "search_step", "探索滑动距离 px", "160");
+        addField(advancedPanel, "search_gesture_ms", "探索手势时长 ms", "640");
 
         addSection(advancedPanel, "运动识别");
         addField(advancedPanel, "frame_interval_ms", "识别间隔 ms", "100");

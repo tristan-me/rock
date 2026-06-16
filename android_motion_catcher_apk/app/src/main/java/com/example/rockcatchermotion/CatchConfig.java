@@ -7,6 +7,8 @@ final class CatchConfig {
     final float fallbackReticleY;
     final float fallbackBallX;
     final float fallbackBallY;
+    final boolean autoReticle;
+    final boolean autoBall;
     final float gainX;
     final float gainY;
     final float directionX;
@@ -45,6 +47,8 @@ final class CatchConfig {
             float fallbackReticleY,
             float fallbackBallX,
             float fallbackBallY,
+            boolean autoReticle,
+            boolean autoBall,
             float gainX,
             float gainY,
             float directionX,
@@ -80,6 +84,8 @@ final class CatchConfig {
         this.fallbackReticleY = fallbackReticleY;
         this.fallbackBallX = fallbackBallX;
         this.fallbackBallY = fallbackBallY;
+        this.autoReticle = autoReticle;
+        this.autoBall = autoBall;
         this.gainX = gainX;
         this.gainY = gainY;
         this.directionX = directionX;
@@ -115,11 +121,21 @@ final class CatchConfig {
 
     static CatchConfig from(SharedPreferences prefs) {
         upgradeDefaults(prefs);
+        float reticleX = getFloat(prefs, "reticle_x", 960f);
+        float reticleY = getFloat(prefs, "reticle_y", 540f);
+        float ballX = getFloat(prefs, "ball_x", 1720f);
+        float ballY = getFloat(prefs, "ball_y", 860f);
+        boolean autoReticle = isDefaultValue(prefs, "reticle_x", "960")
+                && isDefaultValue(prefs, "reticle_y", "540");
+        boolean autoBall = isDefaultValue(prefs, "ball_x", "1720")
+                && isDefaultValue(prefs, "ball_y", "860");
         return new CatchConfig(
-                getFloat(prefs, "reticle_x", 960f),
-                getFloat(prefs, "reticle_y", 540f),
-                getFloat(prefs, "ball_x", 1720f),
-                getFloat(prefs, "ball_y", 860f),
+                reticleX,
+                reticleY,
+                ballX,
+                ballY,
+                autoReticle,
+                autoBall,
                 getFloat(prefs, "gain_x", 0.65f),
                 getFloat(prefs, "gain_y", 0.65f),
                 getFloat(prefs, "direction_x", 1f),
@@ -133,8 +149,8 @@ final class CatchConfig {
                 clampInt((int) getFloat(prefs, "throw_tap_ms", 95f), 40, 300),
                 clampInt((int) getFloat(prefs, "throw_cooldown_ms", 1300f), 300, 5000),
                 clampInt((int) getFloat(prefs, "search_wait_ms", 5000f), 1200, 20000),
-                clampInt((int) getFloat(prefs, "search_step", 220f), 40, 900),
-                clampInt((int) getFloat(prefs, "search_gesture_ms", 520f), 120, 1600),
+                clampInt((int) getFloat(prefs, "search_step", 160f), 40, 900),
+                clampInt((int) getFloat(prefs, "search_gesture_ms", 640f), 120, 1600),
                 Math.max(60, (int) getFloat(prefs, "frame_interval_ms", 100f)),
                 clampInt((int) getFloat(prefs, "sample_stride", 12f), 6, 36),
                 getFloat(prefs, "motion_threshold", 16f),
@@ -155,7 +171,7 @@ final class CatchConfig {
 
     static void upgradeDefaults(SharedPreferences prefs) {
         String version = prefs.getString("config_version", "");
-        if ("6".equals(version)) {
+        if ("7".equals(version)) {
             return;
         }
         SharedPreferences.Editor editor = prefs.edit();
@@ -181,9 +197,11 @@ final class CatchConfig {
         putIfMissing(editor, prefs, "throw_tap_ms", "95");
         putIfMissing(editor, prefs, "throw_cooldown_ms", "1300");
         putIfMissing(editor, prefs, "search_wait_ms", "5000");
-        putIfMissing(editor, prefs, "search_step", "220");
-        putIfMissing(editor, prefs, "search_gesture_ms", "520");
-        editor.putString("config_version", "6");
+        replaceDefault(editor, prefs, "search_step", "220", "160");
+        replaceDefault(editor, prefs, "search_gesture_ms", "520", "640");
+        putIfMissing(editor, prefs, "search_step", "160");
+        putIfMissing(editor, prefs, "search_gesture_ms", "640");
+        editor.putString("config_version", "7");
         editor.apply();
     }
 
@@ -210,6 +228,11 @@ final class CatchConfig {
         if (!prefs.contains(key)) {
             editor.putString(key, value);
         }
+    }
+
+    private static boolean isDefaultValue(SharedPreferences prefs, String key, String defaultValue) {
+        String current = prefs.getString(key, null);
+        return current == null || sameNumber(current, defaultValue);
     }
 
     private static boolean sameNumber(String left, String right) {

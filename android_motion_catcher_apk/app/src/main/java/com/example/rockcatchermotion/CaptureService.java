@@ -69,7 +69,7 @@ public final class CaptureService extends Service {
     private long noTargetSinceMs = 0L;
     private long lastSearchMs = 0L;
     private long lastThrowMs = 0L;
-    private int lastSearchDirection = -1;
+    private int searchSweepIndex = 0;
     private float smoothedStepX = 0f;
     private float smoothedStepY = 0f;
     private Bitmap latestBitmap;
@@ -403,58 +403,39 @@ public final class CaptureService extends Service {
         noTargetSinceMs = 0L;
         lastSearchMs = 0L;
         lastGestureMs = 0L;
+        searchSweepIndex = 0;
         smoothedStepX = 0f;
         smoothedStepY = 0f;
     }
 
     private int chooseSearchDirection() {
-        for (int attempt = 0; attempt < 8; attempt++) {
-            int candidate = random.nextInt(4);
-            if (candidate == lastSearchDirection) {
-                continue;
-            }
-            if (lastSearchDirection >= 0 && candidate == (lastSearchDirection + 2) % 4 && random.nextFloat() < 0.65f) {
-                continue;
-            }
-            lastSearchDirection = candidate;
-            return candidate;
-        }
-        lastSearchDirection = random.nextInt(4);
-        return lastSearchDirection;
+        int[] horizontalSweep = {0, 0, 2, 2};
+        int direction = horizontalSweep[searchSweepIndex % horizontalSweep.length];
+        searchSweepIndex++;
+        return direction;
     }
 
     private SearchMove searchMove(int direction, DetectionResult result, CatchConfig config) {
-        float startX = clamp(config.fallbackReticleX, 0, result.frameWidth - 1);
-        float startY = clamp(config.fallbackReticleY, 0, result.frameHeight - 1);
-        float distance = Math.min(config.searchStepPx, Math.max(40f, Math.min(result.frameWidth, result.frameHeight) * 0.35f));
+        float startX = clamp(result.reticle.centerX(), 0, result.frameWidth - 1);
+        float startY = clamp(result.reticle.centerY(), result.frameHeight * 0.30f, result.frameHeight * 0.72f);
+        float distance = Math.min(config.searchStepPx, Math.max(40f, Math.min(result.frameWidth, result.frameHeight) * 0.24f));
+        distance *= 0.86f + random.nextFloat() * 0.18f;
         float dx = 0f;
-        float dy = 0f;
         String name;
-        switch (direction) {
-            case 0:
-                dx = distance;
-                name = "right";
-                break;
-            case 1:
-                dy = -distance;
-                name = "up";
-                break;
-            case 2:
-                dx = -distance;
-                name = "left";
-                break;
-            default:
-                dy = distance;
-                name = "down";
-                break;
+        if (direction == 0) {
+            dx = distance;
+            name = "pan-right";
+        } else {
+            dx = -distance;
+            name = "pan-left";
         }
         float endX = clamp(startX + dx, 0, result.frameWidth - 1);
-        float endY = clamp(startY + dy, 0, result.frameHeight - 1);
-        if (Math.abs(endX - startX) < 8f && Math.abs(endY - startY) < 8f) {
+        float endY = startY;
+        if (Math.abs(endX - startX) < 8f) {
             startX = result.frameWidth * 0.5f;
-            startY = result.frameHeight * 0.5f;
+            startY = result.frameHeight * 0.56f;
             endX = clamp(startX + dx, 0, result.frameWidth - 1);
-            endY = clamp(startY + dy, 0, result.frameHeight - 1);
+            endY = startY;
         }
         return new SearchMove(startX, startY, endX, endY, distance, name);
     }
