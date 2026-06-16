@@ -28,6 +28,17 @@ final class MotionSpriteDetector {
     private Detection lastDetection;
     private long lastDetectionMs = 0L;
 
+    void reset() {
+        prevR = null;
+        prevG = null;
+        prevB = null;
+        prevLuma = null;
+        prevValid = null;
+        tracks.clear();
+        lastDetection = null;
+        lastDetectionMs = 0L;
+    }
+
     DetectionResult detect(Bitmap bitmap, CatchConfig config) {
         long now = System.currentTimeMillis();
         int width = bitmap.getWidth();

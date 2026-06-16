@@ -47,6 +47,24 @@ public final class CatchAccessibilityService extends AccessibilityService {
         return sent;
     }
 
+    static boolean performTap(float x, float y, int durationMs) {
+        CatchAccessibilityService service = instance;
+        if (service == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        Path path = new Path();
+        path.moveTo(x, y);
+        path.lineTo(x + 0.5f, y + 0.5f);
+        GestureDescription.StrokeDescription stroke =
+                new GestureDescription.StrokeDescription(path, 0, Math.max(40, durationMs));
+        GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
+        boolean sent = service.dispatchGesture(gesture, null, null);
+        if (sent) {
+            service.showGesture(x, y, x, y, Math.max(40, durationMs));
+        }
+        return sent;
+    }
+
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();

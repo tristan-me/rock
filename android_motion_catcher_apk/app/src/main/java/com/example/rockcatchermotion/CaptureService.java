@@ -25,6 +25,7 @@ import android.view.WindowManager;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.Locale;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class CaptureService extends Service {
@@ -60,10 +61,15 @@ public final class CaptureService extends Service {
     private MotionSpriteDetector detector;
     private SharedPreferences prefs;
     private final AtomicBoolean processing = new AtomicBoolean(false);
+    private final Random random = new Random();
     private volatile boolean armed = false;
     private volatile boolean recordNextFrame = false;
     private long lastGestureMs = 0L;
     private long lastProcessMs = 0L;
+    private long noTargetSinceMs = 0L;
+    private long lastSearchMs = 0L;
+    private long lastThrowMs = 0L;
+    private int lastSearchDirection = -1;
     private float smoothedStepX = 0f;
     private float smoothedStepY = 0f;
     private Bitmap latestBitmap;
@@ -92,7 +98,8 @@ public final class CaptureService extends Service {
         }
         if (ACTION_ARM.equals(action)) {
             armed = true;
-            emit("抓捕已开启：检测到运动精灵后会发送滑动手势。");
+            noTargetSinceMs = 0L;
+            emit("抓捕已开启：先识别精灵，识别不到 5 秒后再探索移动。");
             return START_STICKY;
         }
         if (ACTION_PAUSE.equals(action)) {
@@ -179,8 +186,9 @@ public final class CaptureService extends Service {
             }
             CatchConfig config = CatchConfig.from(prefs);
             long now = System.currentTimeMillis();
-            if (armed && lastGestureMs > 0L && now - lastGestureMs < config.postGestureSettleMs) {
-                emit("手势后等待画面稳定 " + (config.postGestureSettleMs - (now - lastGestureMs)) + "ms");
+            long settleUntilMs = config.gestureDurationMs + config.postGestureSettleMs;
+            if (armed && lastGestureMs > 0L && now - lastGestureMs < settleUntilMs) {
+                emit("手势后等待画面稳定 " + (settleUntilMs - (now - lastGestureMs)) + "ms");
                 bitmap.recycle();
                 return;
             }
@@ -216,9 +224,10 @@ public final class CaptureService extends Service {
         DetectionResult result = detector.detect(bitmap, config);
         if (!result.hasTarget()) {
             decaySmoothedStep();
-            emit((armed ? "抓捕中 " : "待命 ") + result.status);
+            handleNoTarget(result, config);
             return;
         }
+        noTargetSinceMs = 0L;
 
         Detection reticle = result.reticle;
         Detection ball = result.ballButton;
@@ -249,18 +258,18 @@ public final class CaptureService extends Service {
         stepX = smoothedStepX;
         stepY = smoothedStepY;
 
-        float endX = clamp(ball.centerX() + stepX, 0, result.frameWidth - 1);
-        float endY = clamp(ball.centerY() + stepY, 0, result.frameHeight - 1);
+        float aimStartX = clamp(reticle.centerX(), 0, result.frameWidth - 1);
+        float aimStartY = clamp(reticle.centerY(), 0, result.frameHeight - 1);
+        float endX = clamp(aimStartX + stepX, 0, result.frameWidth - 1);
+        float endY = clamp(aimStartY + stepY, 0, result.frameHeight - 1);
         String status = String.format(
                 Locale.US,
-                "%s %s dist=%.1f step=(%.0f,%.0f) ball=(%.0f,%.0f)->(%.0f,%.0f)",
+                "%s %s dist=%.1f aim=(%.0f,%.0f)->(%.0f,%.0f)",
                 armed ? "抓捕中" : "待命识别",
                 result.status,
                 distance,
-                stepX,
-                stepY,
-                ball.centerX(),
-                ball.centerY(),
+                aimStartX,
+                aimStartY,
                 endX,
                 endY);
 
@@ -268,20 +277,80 @@ public final class CaptureService extends Service {
             long now = System.currentTimeMillis();
             if (!CatchAccessibilityService.isReady()) {
                 status += " accessibility disabled";
-            } else if (Math.hypot(stepX, stepY) < 2.5f) {
-                status += " no gesture: aim settled";
+            } else if (distance <= config.releaseRadiusPx) {
+                status += tryThrow(ball, config, now);
             } else if (now - lastGestureMs >= config.gestureDurationMs + config.gestureGapMs) {
                 boolean sent = CatchAccessibilityService.performSwipe(
-                        ball.centerX(),
-                        ball.centerY(),
+                        aimStartX,
+                        aimStartY,
                         endX,
                         endY,
                         config.gestureDurationMs);
                 lastGestureMs = now;
-                status += sent ? " gesture sent" : " gesture failed";
+                status += sent ? " aim swipe sent" : " aim swipe failed";
+            } else {
+                status += " waiting gesture gap";
             }
         }
         emit(status);
+    }
+
+    private void handleNoTarget(DetectionResult result, CatchConfig config) {
+        long now = System.currentTimeMillis();
+        if (!armed) {
+            emit("待命 " + result.status);
+            return;
+        }
+        if (noTargetSinceMs == 0L) {
+            noTargetSinceMs = now;
+        }
+        long waitMs = now - noTargetSinceMs;
+        String status = String.format(
+                Locale.US,
+                "抓捕中 %s no-target=%.1fs",
+                result.status,
+                waitMs / 1000f);
+        if (!CatchAccessibilityService.isReady()) {
+            emit(status + " accessibility disabled");
+            return;
+        }
+        long minGap = Math.max(config.searchGestureMs + config.gestureGapMs, config.gestureDurationMs + config.gestureGapMs);
+        if (waitMs >= config.searchWaitMs && now - lastSearchMs >= minGap && now - lastGestureMs >= minGap) {
+            int direction = chooseSearchDirection();
+            SearchMove move = searchMove(direction, result, config);
+            boolean sent = CatchAccessibilityService.performSwipe(
+                    move.startX,
+                    move.startY,
+                    move.endX,
+                    move.endY,
+                    config.searchGestureMs);
+            lastSearchMs = now;
+            lastGestureMs = now;
+            noTargetSinceMs = now;
+            smoothedStepX = 0f;
+            smoothedStepY = 0f;
+            detector.reset();
+            status += sent
+                    ? String.format(Locale.US, " search %s %.0fpx", move.name, move.distance)
+                    : " search failed";
+        }
+        emit(status);
+    }
+
+    private String tryThrow(Detection ball, CatchConfig config, long now) {
+        if (now - lastGestureMs < config.gestureDurationMs + config.gestureGapMs) {
+            return " aligned, waiting gesture gap";
+        }
+        if (now - lastThrowMs < config.throwCooldownMs) {
+            return " aligned, waiting throw cooldown";
+        }
+        boolean sent = CatchAccessibilityService.performTap(ball.centerX(), ball.centerY(), config.throwTapMs);
+        lastThrowMs = now;
+        lastGestureMs = now;
+        smoothedStepX = 0f;
+        smoothedStepY = 0f;
+        detector.reset();
+        return sent ? " aligned, throw tap sent" : " aligned, throw tap failed";
     }
 
     private void decaySmoothedStep() {
@@ -292,6 +361,76 @@ public final class CaptureService extends Service {
         }
         if (Math.abs(smoothedStepY) < 1f) {
             smoothedStepY = 0f;
+        }
+    }
+
+    private int chooseSearchDirection() {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            int candidate = random.nextInt(4);
+            if (candidate == lastSearchDirection) {
+                continue;
+            }
+            if (lastSearchDirection >= 0 && candidate == (lastSearchDirection + 2) % 4 && random.nextFloat() < 0.65f) {
+                continue;
+            }
+            lastSearchDirection = candidate;
+            return candidate;
+        }
+        lastSearchDirection = random.nextInt(4);
+        return lastSearchDirection;
+    }
+
+    private SearchMove searchMove(int direction, DetectionResult result, CatchConfig config) {
+        float startX = clamp(config.fallbackReticleX, 0, result.frameWidth - 1);
+        float startY = clamp(config.fallbackReticleY, 0, result.frameHeight - 1);
+        float distance = Math.min(config.searchStepPx, Math.max(40f, Math.min(result.frameWidth, result.frameHeight) * 0.35f));
+        float dx = 0f;
+        float dy = 0f;
+        String name;
+        switch (direction) {
+            case 0:
+                dx = distance;
+                name = "right";
+                break;
+            case 1:
+                dy = -distance;
+                name = "up";
+                break;
+            case 2:
+                dx = -distance;
+                name = "left";
+                break;
+            default:
+                dy = distance;
+                name = "down";
+                break;
+        }
+        float endX = clamp(startX + dx, 0, result.frameWidth - 1);
+        float endY = clamp(startY + dy, 0, result.frameHeight - 1);
+        if (Math.abs(endX - startX) < 8f && Math.abs(endY - startY) < 8f) {
+            startX = result.frameWidth * 0.5f;
+            startY = result.frameHeight * 0.5f;
+            endX = clamp(startX + dx, 0, result.frameWidth - 1);
+            endY = clamp(startY + dy, 0, result.frameHeight - 1);
+        }
+        return new SearchMove(startX, startY, endX, endY, distance, name);
+    }
+
+    private static final class SearchMove {
+        final float startX;
+        final float startY;
+        final float endX;
+        final float endY;
+        final float distance;
+        final String name;
+
+        SearchMove(float startX, float startY, float endX, float endY, float distance, String name) {
+            this.startX = startX;
+            this.startY = startY;
+            this.endX = endX;
+            this.endY = endY;
+            this.distance = distance;
+            this.name = name;
         }
     }
 
