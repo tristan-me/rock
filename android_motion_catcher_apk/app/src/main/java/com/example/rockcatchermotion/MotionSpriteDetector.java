@@ -264,12 +264,16 @@ final class MotionSpriteDetector {
             if (track.updatedSerial != frameSerial || track.updates < 3 || track.lastBlob == null) {
                 continue;
             }
+            boolean smallDarkTarget = looksLikeSmallDarkTarget(track.lastBlob);
             float jump = track.maxJump(now, config.historyMs, Math.min(700, Math.max(350, config.historyMs / 4)));
-            if (jump < config.minJumpPx) {
+            float requiredJump = smallDarkTarget
+                    ? Math.max(26f, config.minJumpPx * 0.34f)
+                    : config.minJumpPx;
+            if (jump < requiredJump) {
                 continue;
             }
             long age = Math.max(1L, track.lastTimeMs - track.firstTimeInWindow());
-            float travelScore = clamp01(jump / Math.max(1f, config.minJumpPx));
+            float travelScore = clamp01(jump / Math.max(1f, requiredJump));
             float updateScore = clamp01((track.updates - 1f) / 6f);
             float ageScore = clamp01(age / 1200f);
             float motionScore = clamp01(track.lastBlob.motion / Math.max(1f, config.motionThreshold * 2.2f));
@@ -279,7 +283,11 @@ final class MotionSpriteDetector {
                     + ageScore * 0.14f
                     + motionScore * 0.14f
                     + compactScore * 0.08f;
-            if (score >= config.minTrackScore && (best == null || score > best.score)) {
+            float threshold = smallDarkTarget ? Math.max(0.30f, config.minTrackScore - 0.12f) : config.minTrackScore;
+            if (smallDarkTarget) {
+                score += 0.08f;
+            }
+            if (score >= threshold && (best == null || score > best.score)) {
                 best = new Candidate(track, score, jump);
             }
         }
@@ -291,10 +299,13 @@ final class MotionSpriteDetector {
             return null;
         }
         Candidate best = null;
-        float minJump = Math.max(72f, config.minJumpPx * 0.72f);
+        float minJump = Math.max(24f, config.minJumpPx * 0.24f);
         float maxJump = Math.max(config.trackLinkPx * 2.4f, config.minJumpPx * 2.2f);
         for (Blob current : appearanceBlobs) {
-            if (current.changeRatio < 0.12f && current.motion < config.motionThreshold * 1.3f) {
+            if (!looksLikeSmallDarkTarget(current)) {
+                continue;
+            }
+            if (current.changeRatio < 0.08f && current.motion < config.motionThreshold * 0.9f) {
                 continue;
             }
             for (Blob previous : prevAppearanceBlobs) {
@@ -327,7 +338,7 @@ final class MotionSpriteDetector {
                         + sizeScore * 0.16f
                         + changeScore * 0.16f
                         + compactScore * 0.10f;
-                if (score >= Math.max(0.34f, config.minTrackScore - 0.10f)
+                if (score >= Math.max(0.30f, config.minTrackScore - 0.14f)
                         && (best == null || score > best.score)) {
                     best = new Candidate(current, score, jump, "dark-shift");
                 }
@@ -516,10 +527,11 @@ final class MotionSpriteDetector {
                 int luma = currLuma[idx];
                 int saturation = Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b));
                 float contrast = localMean - luma;
-                boolean dark = luma < 84 && (contrast > 7f || luma < 58);
-                boolean purpleBlueDark = saturation >= 10 && b >= r + 4 && b >= g - 14;
+                boolean dark = luma < 88 && (contrast > 5f || luma < 62);
+                boolean purpleBlueDark = saturation >= 8 && b >= r - 2 && b >= g - 18;
+                boolean neutralDark = luma < 62 && saturation >= 4 && contrast > 3f;
                 boolean notDebugRed = !(r > 170 && r > g + 60 && r > b + 55);
-                if (dark && purpleBlueDark && notDebugRed) {
+                if (dark && (purpleBlueDark || neutralDark) && notDebugRed) {
                     mask[idx] = true;
                     scores[idx] = Math.max(0f, contrast) + Math.max(0, 88 - luma) * 0.45f + saturation * 0.10f + deltas[idx] * 0.35f;
                 }
@@ -621,7 +633,7 @@ final class MotionSpriteDetector {
             float density = count / (float) bboxCells;
             int boxWidth = (maxGx - minGx + 1) * stride;
             int boxHeight = (maxGy - minGy + 1) * stride;
-            if (count < 2
+            if (count < 1
                     || count > maxCells
                     || boxWidth > maxSide
                     || boxHeight > maxSide
@@ -757,6 +769,18 @@ final class MotionSpriteDetector {
             return true;
         }
         return x > width - Math.round(width * 0.17f) && y < Math.round(height * 0.32f);
+    }
+
+    private boolean looksLikeSmallDarkTarget(Blob blob) {
+        float frameHeight = Math.max(1f, prevFrameHeight);
+        float width = blob.width();
+        float height = blob.height();
+        float blueBias = blob.avgB - Math.max(blob.avgR, blob.avgG);
+        boolean compactSmall = width <= 110f && height <= 100f && blob.cellCount <= 36;
+        boolean darkEnough = blob.avgLuma < 88f;
+        boolean notBottomUi = blob.centerY < frameHeight * 0.78f;
+        boolean colorOk = blueBias >= -18f || blob.avgLuma < 58f;
+        return compactSmall && darkEnough && notBottomUi && colorOk;
     }
 
     private int integralSum(int[] integral, int gridWidth, int x0, int y0, int x1, int y1) {

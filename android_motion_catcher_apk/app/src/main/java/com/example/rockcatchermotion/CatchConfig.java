@@ -136,7 +136,7 @@ final class CatchConfig {
                 clampInt((int) getFloat(prefs, "search_step", 220f), 40, 900),
                 clampInt((int) getFloat(prefs, "search_gesture_ms", 520f), 120, 1600),
                 Math.max(60, (int) getFloat(prefs, "frame_interval_ms", 100f)),
-                clampInt((int) getFloat(prefs, "sample_stride", 14f), 6, 36),
+                clampInt((int) getFloat(prefs, "sample_stride", 12f), 6, 36),
                 getFloat(prefs, "motion_threshold", 18f),
                 clamp(getFloat(prefs, "global_change_limit", 0.65f), 0.08f, 0.95f),
                 clampInt((int) getFloat(prefs, "history_ms", 3500f), 800, 8000),
@@ -155,7 +155,7 @@ final class CatchConfig {
 
     static void upgradeDefaults(SharedPreferences prefs) {
         String version = prefs.getString("config_version", "");
-        if ("4".equals(version)) {
+        if ("5".equals(version)) {
             return;
         }
         SharedPreferences.Editor editor = prefs.edit();
@@ -169,6 +169,7 @@ final class CatchConfig {
         replaceDefault(editor, prefs, "min_jump_px", "180", "130");
         replaceDefault(editor, prefs, "min_track_score", "0.52", "0.44");
         replaceDefault(editor, prefs, "hold_ms", "900", "1200");
+        replaceDefault(editor, prefs, "sample_stride", "14", "12");
         putIfMissing(editor, prefs, "gesture_gap_ms", "220");
         putIfMissing(editor, prefs, "post_gesture_settle_ms", "160");
         putIfMissing(editor, prefs, "aim_smoothing", "0.55");
@@ -177,7 +178,7 @@ final class CatchConfig {
         putIfMissing(editor, prefs, "search_wait_ms", "5000");
         putIfMissing(editor, prefs, "search_step", "220");
         putIfMissing(editor, prefs, "search_gesture_ms", "520");
-        editor.putString("config_version", "4");
+        editor.putString("config_version", "5");
         editor.apply();
     }
 

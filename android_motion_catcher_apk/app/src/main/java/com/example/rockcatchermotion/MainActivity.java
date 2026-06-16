@@ -140,7 +140,7 @@ public final class MainActivity extends Activity {
 
         addSection(advancedPanel, "运动识别");
         addField(advancedPanel, "frame_interval_ms", "识别间隔 ms", "100");
-        addField(advancedPanel, "sample_stride", "采样步长 px：小更准，大更快", "14");
+        addField(advancedPanel, "sample_stride", "采样步长 px：小更准，大更快", "12");
         addField(advancedPanel, "motion_threshold", "运动阈值：误报多就调高", "18");
         addField(advancedPanel, "global_change_limit", "全屏变化过滤：光影/转场误报多就调低", "0.65");
         addField(advancedPanel, "history_ms", "观察历史 ms", "3500");
