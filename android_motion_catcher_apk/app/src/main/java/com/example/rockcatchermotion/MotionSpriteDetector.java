@@ -27,7 +27,7 @@ final class MotionSpriteDetector {
     private long frameSerial = 0L;
     private Detection lastDetection;
     private long lastDetectionMs = 0L;
-    private ArrayList<Blob> prevAppearanceBlobs = new ArrayList<>();
+    private final ArrayList<AppearanceSnapshot> appearanceHistory = new ArrayList<>();
 
     void reset() {
         prevR = null;
@@ -38,7 +38,7 @@ final class MotionSpriteDetector {
         tracks.clear();
         lastDetection = null;
         lastDetectionMs = 0L;
-        prevAppearanceBlobs.clear();
+        appearanceHistory.clear();
     }
 
     DetectionResult detect(Bitmap bitmap, CatchConfig config) {
@@ -92,7 +92,7 @@ final class MotionSpriteDetector {
             tracks.clear();
             boolean[] noChanged = new boolean[total];
             float[] noDeltas = new float[total];
-            prevAppearanceBlobs = buildAppearanceBlobs(
+            ArrayList<Blob> appearanceBlobs = buildAppearanceBlobs(
                     noChanged,
                     noDeltas,
                     currR,
@@ -106,8 +106,9 @@ final class MotionSpriteDetector {
                     width,
                     height,
                     config);
+            rememberAppearanceBlobs(appearanceBlobs, now, config);
             storePrevious(width, height, gridWidth, gridHeight, stride, currR, currG, currB, currLuma, currValid);
-            result.status = String.format(Locale.US, "warming up motion grid %dx%d stride=%d dark=%d", gridWidth, gridHeight, stride, prevAppearanceBlobs.size());
+            result.status = String.format(Locale.US, "warming up motion grid %dx%d stride=%d dark=%d", gridWidth, gridHeight, stride, appearanceBlobs.size());
             return result;
         }
 
@@ -172,7 +173,7 @@ final class MotionSpriteDetector {
                 width,
                 height,
                 config);
-        Candidate appearanceShift = findAppearanceShift(appearanceBlobs, config);
+        Candidate appearanceShift = findAppearanceShift(appearanceBlobs, config, now);
         ArrayList<Blob> fusedBlobs = fuseBlobs(blobs, appearanceBlobs);
         updateTracks(fusedBlobs, now, config);
         Candidate best = findBestCandidate(now, config);
@@ -207,7 +208,7 @@ final class MotionSpriteDetector {
                     globalChange);
         }
 
-        prevAppearanceBlobs = new ArrayList<>(appearanceBlobs);
+        rememberAppearanceBlobs(appearanceBlobs, now, config);
         storePrevious(width, height, gridWidth, gridHeight, stride, currR, currG, currB, currLuma, currValid);
         return result;
     }
@@ -294,21 +295,28 @@ final class MotionSpriteDetector {
         return best;
     }
 
-    private Candidate findAppearanceShift(List<Blob> appearanceBlobs, CatchConfig config) {
-        if (prevAppearanceBlobs.isEmpty() || appearanceBlobs.isEmpty()) {
+    private Candidate findAppearanceShift(List<Blob> appearanceBlobs, CatchConfig config, long now) {
+        if (appearanceHistory.isEmpty() || appearanceBlobs.isEmpty()) {
             return null;
         }
         Candidate best = null;
-        float minJump = Math.max(24f, config.minJumpPx * 0.24f);
-        float maxJump = Math.max(config.trackLinkPx * 2.4f, config.minJumpPx * 2.2f);
+        float minJump = Math.max(20f, config.minJumpPx * 0.20f);
+        float maxJump = Math.max(config.trackLinkPx * 2.8f, config.minJumpPx * 2.8f);
         for (Blob current : appearanceBlobs) {
             if (!looksLikeSmallDarkTarget(current)) {
                 continue;
             }
-            if (current.changeRatio < 0.08f && current.motion < config.motionThreshold * 0.9f) {
+            boolean locallyMoving = current.changeRatio >= 0.025f
+                    || current.motion >= config.motionThreshold * 0.38f;
+            if (!locallyMoving && current.compactScore < 0.45f) {
                 continue;
             }
-            for (Blob previous : prevAppearanceBlobs) {
+            for (AppearanceSnapshot snapshot : appearanceHistory) {
+                long age = now - snapshot.timeMs;
+                if (age < 450L || age > config.historyMs) {
+                    continue;
+                }
+                Blob previous = snapshot.blob;
                 float jump = distance(current.centerX, current.centerY, previous.centerX, previous.centerY);
                 if (jump < minJump || jump > maxJump) {
                     continue;
@@ -320,31 +328,68 @@ final class MotionSpriteDetector {
                         previous.avgR,
                         previous.avgG,
                         previous.avgB);
-                if (color > 30f) {
+                if (color > 36f) {
                     continue;
                 }
                 float sizeRatio = Math.max(current.cellCount, previous.cellCount)
                         / (float) Math.max(1, Math.min(current.cellCount, previous.cellCount));
-                if (sizeRatio > 3.4f) {
+                if (sizeRatio > 3.8f) {
                     continue;
                 }
-                float jumpScore = clamp01(jump / Math.max(1f, config.minJumpPx));
-                float colorScore = clamp01(1f - color / 30f);
-                float sizeScore = clamp01(1f - (sizeRatio - 1f) / 2.4f);
-                float changeScore = clamp01(current.changeRatio * 2.6f);
+                float jumpScore = clamp01(jump / Math.max(1f, config.minJumpPx * 0.72f));
+                float colorScore = clamp01(1f - color / 36f);
+                float sizeScore = clamp01(1f - (sizeRatio - 1f) / 2.8f);
+                float changeScore = clamp01(Math.max(current.changeRatio, previous.changeRatio) * 3.2f);
+                float motionScore = clamp01(Math.max(current.motion, previous.motion) / Math.max(1f, config.motionThreshold));
+                float ageScore = clamp01(age / 1400f);
                 float compactScore = current.compactScore;
-                float score = jumpScore * 0.38f
-                        + colorScore * 0.20f
-                        + sizeScore * 0.16f
-                        + changeScore * 0.16f
-                        + compactScore * 0.10f;
-                if (score >= Math.max(0.30f, config.minTrackScore - 0.14f)
+                float score = jumpScore * 0.32f
+                        + colorScore * 0.17f
+                        + sizeScore * 0.14f
+                        + changeScore * 0.14f
+                        + motionScore * 0.10f
+                        + ageScore * 0.05f
+                        + compactScore * 0.08f;
+                if (score >= Math.max(0.28f, config.minTrackScore - 0.16f)
                         && (best == null || score > best.score)) {
-                    best = new Candidate(current, score, jump, "dark-shift");
+                    best = new Candidate(current, score, jump, "dark-history");
                 }
             }
         }
         return best;
+    }
+
+    private void rememberAppearanceBlobs(List<Blob> appearanceBlobs, long now, CatchConfig config) {
+        pruneAppearanceHistory(now, config);
+        for (Blob blob : appearanceBlobs) {
+            if (looksLikeSmallDarkTarget(blob) && (blob.changeRatio >= 0.015f || blob.compactScore >= 0.35f)) {
+                appearanceHistory.add(new AppearanceSnapshot(new Blob(
+                        blob.centerX,
+                        blob.centerY,
+                        new RectF(blob.box),
+                        blob.cellCount,
+                        blob.avgR,
+                        blob.avgG,
+                        blob.avgB,
+                        blob.avgLuma,
+                        blob.motion,
+                        blob.compactScore,
+                        blob.changeRatio), now));
+            }
+        }
+        while (appearanceHistory.size() > 90) {
+            appearanceHistory.remove(0);
+        }
+    }
+
+    private void pruneAppearanceHistory(long now, CatchConfig config) {
+        Iterator<AppearanceSnapshot> iterator = appearanceHistory.iterator();
+        while (iterator.hasNext()) {
+            AppearanceSnapshot snapshot = iterator.next();
+            if (now - snapshot.timeMs > config.historyMs) {
+                iterator.remove();
+            }
+        }
     }
 
     private ArrayList<Blob> buildBlobs(
@@ -778,7 +823,7 @@ final class MotionSpriteDetector {
         float blueBias = blob.avgB - Math.max(blob.avgR, blob.avgG);
         boolean compactSmall = width <= 110f && height <= 100f && blob.cellCount <= 36;
         boolean darkEnough = blob.avgLuma < 88f;
-        boolean notBottomUi = blob.centerY < frameHeight * 0.78f;
+        boolean notBottomUi = prevFrameHeight <= 0 || blob.centerY < frameHeight * 0.78f;
         boolean colorOk = blueBias >= -18f || blob.avgLuma < 58f;
         return compactSmall && darkEnough && notBottomUi && colorOk;
     }
@@ -1022,6 +1067,16 @@ final class MotionSpriteDetector {
             this.timeMs = timeMs;
             this.x = x;
             this.y = y;
+        }
+    }
+
+    private static final class AppearanceSnapshot {
+        final Blob blob;
+        final long timeMs;
+
+        AppearanceSnapshot(Blob blob, long timeMs) {
+            this.blob = blob;
+            this.timeMs = timeMs;
         }
     }
 

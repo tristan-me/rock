@@ -146,6 +146,14 @@ public final class CatchAccessibilityService extends AccessibilityService {
                 if (controlBar != null) {
                     controlBar.setCaptureActive(false);
                 }
+                sendCaptureAction(CaptureService.ACTION_PAUSE);
+            }
+
+            @Override
+            public void onExit() {
+                if (controlBar != null) {
+                    controlBar.setCaptureActive(false);
+                }
                 sendCaptureAction(CaptureService.ACTION_STOP);
             }
 
@@ -187,8 +195,11 @@ public final class CatchAccessibilityService extends AccessibilityService {
     }
 
     private void sendCaptureAction(String action) {
-        if (!CaptureService.isRunning() && !CaptureService.ACTION_STOP.equals(action)) {
-            Toast.makeText(this, "请先回 Motion Catcher 点“启动悬浮条 / 准备接管”并授权截屏", Toast.LENGTH_LONG).show();
+        if (!CaptureService.isRunning()) {
+            if (CaptureService.ACTION_STOP.equals(action) || CaptureService.ACTION_PAUSE.equals(action)) {
+                return;
+            }
+            Toast.makeText(this, "截屏会话未运行。若刚开过系统录屏，请回 Motion Catcher 重新授权截屏。", Toast.LENGTH_LONG).show();
             if (controlBar != null) {
                 controlBar.setCaptureActive(false);
             }

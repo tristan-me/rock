@@ -137,16 +137,16 @@ final class CatchConfig {
                 clampInt((int) getFloat(prefs, "search_gesture_ms", 520f), 120, 1600),
                 Math.max(60, (int) getFloat(prefs, "frame_interval_ms", 100f)),
                 clampInt((int) getFloat(prefs, "sample_stride", 12f), 6, 36),
-                getFloat(prefs, "motion_threshold", 18f),
+                getFloat(prefs, "motion_threshold", 16f),
                 clamp(getFloat(prefs, "global_change_limit", 0.65f), 0.08f, 0.95f),
                 clampInt((int) getFloat(prefs, "history_ms", 3500f), 800, 8000),
-                clampInt((int) getFloat(prefs, "min_jump_px", 130f), 20, 1200),
-                clampInt((int) getFloat(prefs, "track_link_px", 240f), 40, 1200),
+                clampInt((int) getFloat(prefs, "min_jump_px", 110f), 20, 1200),
+                clampInt((int) getFloat(prefs, "track_link_px", 260f), 40, 1200),
                 clampInt((int) getFloat(prefs, "min_blob_cells", 4f), 1, 80),
                 clamp(getFloat(prefs, "max_blob_fraction", 0.025f), 0.002f, 0.25f),
                 clampInt((int) getFloat(prefs, "max_blob_side_px", 360f), 40, 1600),
-                clamp(getFloat(prefs, "min_track_score", 0.44f), 0.05f, 0.95f),
-                clampInt((int) getFloat(prefs, "hold_ms", 1200f), 0, 3000),
+                clamp(getFloat(prefs, "min_track_score", 0.40f), 0.05f, 0.95f),
+                clampInt((int) getFloat(prefs, "hold_ms", 1500f), 0, 3000),
                 Math.max(0, (int) getFloat(prefs, "ignore_top_px", 0f)),
                 Math.max(0, (int) getFloat(prefs, "ignore_bottom_px", 0f)),
                 Math.max(0, (int) getFloat(prefs, "ignore_reticle_radius", 80f)),
@@ -155,7 +155,7 @@ final class CatchConfig {
 
     static void upgradeDefaults(SharedPreferences prefs) {
         String version = prefs.getString("config_version", "");
-        if ("5".equals(version)) {
+        if ("6".equals(version)) {
             return;
         }
         SharedPreferences.Editor editor = prefs.edit();
@@ -164,11 +164,16 @@ final class CatchConfig {
         replaceDefault(editor, prefs, "gesture_ms", "420", "520");
         replaceDefault(editor, prefs, "frame_interval_ms", "120", "100");
         replaceDefault(editor, prefs, "release_radius", "28", "42");
-        replaceDefault(editor, prefs, "motion_threshold", "20", "18");
+        replaceDefault(editor, prefs, "motion_threshold", "20", "16");
+        replaceDefault(editor, prefs, "motion_threshold", "18", "16");
         replaceDefault(editor, prefs, "global_change_limit", "0.55", "0.65");
-        replaceDefault(editor, prefs, "min_jump_px", "180", "130");
-        replaceDefault(editor, prefs, "min_track_score", "0.52", "0.44");
-        replaceDefault(editor, prefs, "hold_ms", "900", "1200");
+        replaceDefault(editor, prefs, "min_jump_px", "180", "110");
+        replaceDefault(editor, prefs, "min_jump_px", "130", "110");
+        replaceDefault(editor, prefs, "track_link_px", "240", "260");
+        replaceDefault(editor, prefs, "min_track_score", "0.52", "0.40");
+        replaceDefault(editor, prefs, "min_track_score", "0.44", "0.40");
+        replaceDefault(editor, prefs, "hold_ms", "900", "1500");
+        replaceDefault(editor, prefs, "hold_ms", "1200", "1500");
         replaceDefault(editor, prefs, "sample_stride", "14", "12");
         putIfMissing(editor, prefs, "gesture_gap_ms", "220");
         putIfMissing(editor, prefs, "post_gesture_settle_ms", "160");
@@ -178,7 +183,7 @@ final class CatchConfig {
         putIfMissing(editor, prefs, "search_wait_ms", "5000");
         putIfMissing(editor, prefs, "search_step", "220");
         putIfMissing(editor, prefs, "search_gesture_ms", "520");
-        editor.putString("config_version", "5");
+        editor.putString("config_version", "6");
         editor.apply();
     }
 

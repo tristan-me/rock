@@ -73,6 +73,8 @@ public final class CaptureService extends Service {
     private float smoothedStepX = 0f;
     private float smoothedStepY = 0f;
     private Bitmap latestBitmap;
+    private volatile boolean projectionStopExpected = false;
+    private volatile int projectionGeneration = 0;
 
     @Override
     public void onCreate() {
@@ -92,19 +94,23 @@ public final class CaptureService extends Service {
         }
         String action = intent.getAction();
         if (ACTION_STOP.equals(action)) {
+            armed = false;
             running = false;
+            projectionStopExpected = true;
             stopSelf();
             return START_NOT_STICKY;
         }
         if (ACTION_ARM.equals(action)) {
             armed = true;
             noTargetSinceMs = 0L;
+            resetAimState();
             emit("抓捕已开启：先识别精灵，识别不到 5 秒后再探索移动。");
             return START_STICKY;
         }
         if (ACTION_PAUSE.equals(action)) {
             armed = false;
-            emit("抓捕已暂停：继续看屏幕，但不会控制手机。");
+            resetAimState();
+            emit("已释放接管：悬浮条和截屏会话保留，再点抓捕可直接恢复。");
             return START_STICKY;
         }
         if (ACTION_RECORD.equals(action)) {
@@ -114,7 +120,8 @@ public final class CaptureService extends Service {
         }
         if (ACTION_START.equals(action)) {
             armed = intent.getBooleanExtra(EXTRA_ARMED, false);
-            running = true;
+            running = false;
+            projectionStopExpected = false;
             startForeground(1, buildNotification(armed));
             int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
             Intent data = intent.getParcelableExtra(EXTRA_RESULT_DATA);
@@ -125,21 +132,30 @@ public final class CaptureService extends Service {
     }
 
     private void startProjection(int resultCode, Intent data) {
-        stopProjection();
+        projectionGeneration++;
+        if (projection != null || virtualDisplay != null || imageReader != null) {
+            projectionStopExpected = true;
+            releaseProjectionResources(true);
+        }
+        projectionStopExpected = false;
         if (data == null) {
+            running = false;
             emit("缺少截屏授权数据");
             return;
         }
         MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
         projection = manager.getMediaProjection(resultCode, data);
         if (projection == null) {
+            running = false;
             emit("无法创建 MediaProjection");
             return;
         }
+        final int generation = projectionGeneration;
+        running = true;
         projection.registerCallback(new MediaProjection.Callback() {
             @Override
             public void onStop() {
-                emit("截屏服务已停止");
+                handler.post(() -> handleProjectionStopped(generation));
             }
         }, handler);
 
@@ -162,6 +178,25 @@ public final class CaptureService extends Service {
                 null,
                 handler);
         emit("悬浮条已准备 " + width + "x" + height + (armed ? "，抓捕中" : "，待命中"));
+    }
+
+    private void handleProjectionStopped(int generation) {
+        if (generation != projectionGeneration) {
+            return;
+        }
+        boolean expected = projectionStopExpected;
+        projectionStopExpected = false;
+        armed = false;
+        running = false;
+        resetAimState();
+        detector.reset();
+        releaseProjectionResources(false);
+        if (expected) {
+            emit("截屏服务已退出");
+        } else {
+            emit("系统停止了截屏，通常是系统录屏占用了投屏通道；请回 Motion Catcher 重新授权一次。");
+            stopSelf();
+        }
     }
 
     private void onImageAvailable(ImageReader reader) {
@@ -364,6 +399,14 @@ public final class CaptureService extends Service {
         }
     }
 
+    private void resetAimState() {
+        noTargetSinceMs = 0L;
+        lastSearchMs = 0L;
+        lastGestureMs = 0L;
+        smoothedStepX = 0f;
+        smoothedStepY = 0f;
+    }
+
     private int chooseSearchDirection() {
         for (int attempt = 0; attempt < 8; attempt++) {
             int candidate = random.nextInt(4);
@@ -439,6 +482,11 @@ public final class CaptureService extends Service {
     }
 
     private void stopProjection() {
+        projectionStopExpected = true;
+        releaseProjectionResources(true);
+    }
+
+    private void releaseProjectionResources(boolean stopProjection) {
         forgetLatestFrame();
         if (imageReader != null) {
             imageReader.close();
@@ -448,9 +496,10 @@ public final class CaptureService extends Service {
             virtualDisplay.release();
             virtualDisplay = null;
         }
-        if (projection != null) {
-            projection.stop();
-            projection = null;
+        MediaProjection currentProjection = projection;
+        projection = null;
+        if (currentProjection != null && stopProjection) {
+            currentProjection.stop();
         }
     }
 
@@ -532,6 +581,7 @@ public final class CaptureService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        armed = false;
         stopProjection();
         if (thread != null) {
             thread.quitSafely();

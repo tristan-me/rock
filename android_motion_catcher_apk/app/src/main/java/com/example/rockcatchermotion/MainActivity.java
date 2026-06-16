@@ -97,7 +97,7 @@ public final class MainActivity extends Activity {
             saveFields();
             startActivity(new Intent(this, CalibrationActivity.class));
         });
-        addButton(toolRow, "停止服务", v -> stopService(new Intent(this, CaptureService.class).setAction(CaptureService.ACTION_STOP)));
+        addButton(toolRow, "退出截屏服务", v -> stopService(new Intent(this, CaptureService.class).setAction(CaptureService.ACTION_STOP)));
         addButton(toolRow, "应用详情", v -> {
             Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
             intent.setData(Uri.parse("package:" + getPackageName()));
@@ -141,16 +141,16 @@ public final class MainActivity extends Activity {
         addSection(advancedPanel, "运动识别");
         addField(advancedPanel, "frame_interval_ms", "识别间隔 ms", "100");
         addField(advancedPanel, "sample_stride", "采样步长 px：小更准，大更快", "12");
-        addField(advancedPanel, "motion_threshold", "运动阈值：误报多就调高", "18");
+        addField(advancedPanel, "motion_threshold", "运动阈值：误报多就调高", "16");
         addField(advancedPanel, "global_change_limit", "全屏变化过滤：光影/转场误报多就调低", "0.65");
         addField(advancedPanel, "history_ms", "观察历史 ms", "3500");
-        addField(advancedPanel, "min_jump_px", "几秒内最小移动距离 px", "130");
-        addField(advancedPanel, "track_link_px", "相邻帧轨迹连接距离 px", "240");
+        addField(advancedPanel, "min_jump_px", "几秒内最小移动距离 px", "110");
+        addField(advancedPanel, "track_link_px", "相邻帧轨迹连接距离 px", "260");
         addField(advancedPanel, "min_blob_cells", "最小运动块格子数", "4");
         addField(advancedPanel, "max_blob_fraction", "最大运动块占比", "0.025");
         addField(advancedPanel, "max_blob_side_px", "最大运动块边长 px", "360");
-        addField(advancedPanel, "min_track_score", "最低轨迹分", "0.44");
-        addField(advancedPanel, "hold_ms", "丢失后保留目标 ms", "1200");
+        addField(advancedPanel, "min_track_score", "最低轨迹分", "0.40");
+        addField(advancedPanel, "hold_ms", "丢失后保留目标 ms", "1500");
         addField(advancedPanel, "ignore_top_px", "忽略顶部 px", "0");
         addField(advancedPanel, "ignore_bottom_px", "忽略底部 px", "0");
         addField(advancedPanel, "ignore_reticle_radius", "忽略准星半径 px", "80");

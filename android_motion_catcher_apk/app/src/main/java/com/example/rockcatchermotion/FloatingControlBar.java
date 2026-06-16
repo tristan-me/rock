@@ -15,6 +15,7 @@ final class FloatingControlBar extends LinearLayout {
     interface Controller {
         void onCaptureToggle(boolean active);
         void onStop();
+        void onExit();
         void onRecord();
         void onSaveFrame();
         void onMoved(int x, int y);
@@ -50,8 +51,12 @@ final class FloatingControlBar extends LinearLayout {
         captureButton.setOnClickListener(v -> toggleCapture());
         addView(captureButton);
 
-        Button stopButton = button("停止");
+        Button stopButton = button("释放");
         stopButton.setOnClickListener(v -> controller.onStop());
+        stopButton.setOnLongClickListener(v -> {
+            controller.onExit();
+            return true;
+        });
         addView(stopButton);
 
         Button recordButton = button("标定");
