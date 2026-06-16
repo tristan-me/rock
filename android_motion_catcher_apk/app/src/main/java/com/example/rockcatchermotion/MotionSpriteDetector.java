@@ -27,6 +27,7 @@ final class MotionSpriteDetector {
     private long frameSerial = 0L;
     private Detection lastDetection;
     private long lastDetectionMs = 0L;
+    private ArrayList<Blob> prevAppearanceBlobs = new ArrayList<>();
 
     void reset() {
         prevR = null;
@@ -37,6 +38,7 @@ final class MotionSpriteDetector {
         tracks.clear();
         lastDetection = null;
         lastDetectionMs = 0L;
+        prevAppearanceBlobs.clear();
     }
 
     DetectionResult detect(Bitmap bitmap, CatchConfig config) {
@@ -88,8 +90,24 @@ final class MotionSpriteDetector {
 
         if (!hasCompatiblePrevious(width, height, gridWidth, gridHeight, stride)) {
             tracks.clear();
+            boolean[] noChanged = new boolean[total];
+            float[] noDeltas = new float[total];
+            prevAppearanceBlobs = buildAppearanceBlobs(
+                    noChanged,
+                    noDeltas,
+                    currR,
+                    currG,
+                    currB,
+                    currLuma,
+                    currValid,
+                    gridWidth,
+                    gridHeight,
+                    stride,
+                    width,
+                    height,
+                    config);
             storePrevious(width, height, gridWidth, gridHeight, stride, currR, currG, currB, currLuma, currValid);
-            result.status = String.format(Locale.US, "warming up motion grid %dx%d stride=%d", gridWidth, gridHeight, stride);
+            result.status = String.format(Locale.US, "warming up motion grid %dx%d stride=%d dark=%d", gridWidth, gridHeight, stride, prevAppearanceBlobs.size());
             return result;
         }
 
@@ -140,33 +158,56 @@ final class MotionSpriteDetector {
                 height,
                 validCount,
                 config);
-        updateTracks(blobs, now, config);
+        ArrayList<Blob> appearanceBlobs = buildAppearanceBlobs(
+                changed,
+                deltas,
+                currR,
+                currG,
+                currB,
+                currLuma,
+                currValid,
+                gridWidth,
+                gridHeight,
+                stride,
+                width,
+                height,
+                config);
+        Candidate appearanceShift = findAppearanceShift(appearanceBlobs, config);
+        ArrayList<Blob> fusedBlobs = fuseBlobs(blobs, appearanceBlobs);
+        updateTracks(fusedBlobs, now, config);
         Candidate best = findBestCandidate(now, config);
+        if (best == null && appearanceShift != null) {
+            best = appearanceShift;
+        }
         if (best != null) {
-            Blob blob = best.track.lastBlob;
+            Blob blob = best.blob();
             RectF box = paddedBox(blob.box, Math.max(24f, stride * 1.8f), width, height);
             result.sprite = new Detection("sprite", best.score, box);
             lastDetection = result.sprite;
             lastDetectionMs = now;
             result.status = String.format(
                     Locale.US,
-                    "motion target score=%.2f jump=%.0f blobs=%d tracks=%d global=%.2f",
+                    "%s target score=%.2f jump=%.0f motion=%d dark=%d tracks=%d global=%.2f",
+                    best.source,
                     best.score,
                     best.jumpPx,
                     blobs.size(),
+                    appearanceBlobs.size(),
                     activeTrackCount(now, config),
                     globalChange);
         } else {
             result.sprite = heldDetection(now, config);
             result.status = String.format(
                     Locale.US,
-                    "%s blobs=%d tracks=%d changed=%.2f",
+                    "%s motion=%d dark=%d tracks=%d changed=%.2f",
                     result.sprite != null ? "holding last target" : "searching motion",
                     blobs.size(),
+                    appearanceBlobs.size(),
                     activeTrackCount(now, config),
                     globalChange);
         }
 
+        prevAppearanceBlobs = new ArrayList<>(appearanceBlobs);
         storePrevious(width, height, gridWidth, gridHeight, stride, currR, currG, currB, currLuma, currValid);
         return result;
     }
@@ -240,6 +281,56 @@ final class MotionSpriteDetector {
                     + compactScore * 0.08f;
             if (score >= config.minTrackScore && (best == null || score > best.score)) {
                 best = new Candidate(track, score, jump);
+            }
+        }
+        return best;
+    }
+
+    private Candidate findAppearanceShift(List<Blob> appearanceBlobs, CatchConfig config) {
+        if (prevAppearanceBlobs.isEmpty() || appearanceBlobs.isEmpty()) {
+            return null;
+        }
+        Candidate best = null;
+        float minJump = Math.max(72f, config.minJumpPx * 0.72f);
+        float maxJump = Math.max(config.trackLinkPx * 2.4f, config.minJumpPx * 2.2f);
+        for (Blob current : appearanceBlobs) {
+            if (current.changeRatio < 0.12f && current.motion < config.motionThreshold * 1.3f) {
+                continue;
+            }
+            for (Blob previous : prevAppearanceBlobs) {
+                float jump = distance(current.centerX, current.centerY, previous.centerX, previous.centerY);
+                if (jump < minJump || jump > maxJump) {
+                    continue;
+                }
+                float color = chromaDistance(
+                        current.avgR,
+                        current.avgG,
+                        current.avgB,
+                        previous.avgR,
+                        previous.avgG,
+                        previous.avgB);
+                if (color > 30f) {
+                    continue;
+                }
+                float sizeRatio = Math.max(current.cellCount, previous.cellCount)
+                        / (float) Math.max(1, Math.min(current.cellCount, previous.cellCount));
+                if (sizeRatio > 3.4f) {
+                    continue;
+                }
+                float jumpScore = clamp01(jump / Math.max(1f, config.minJumpPx));
+                float colorScore = clamp01(1f - color / 30f);
+                float sizeScore = clamp01(1f - (sizeRatio - 1f) / 2.4f);
+                float changeScore = clamp01(current.changeRatio * 2.6f);
+                float compactScore = current.compactScore;
+                float score = jumpScore * 0.38f
+                        + colorScore * 0.20f
+                        + sizeScore * 0.16f
+                        + changeScore * 0.16f
+                        + compactScore * 0.10f;
+                if (score >= Math.max(0.34f, config.minTrackScore - 0.10f)
+                        && (best == null || score > best.score)) {
+                    best = new Candidate(current, score, jump, "dark-shift");
+                }
             }
         }
         return best;
@@ -356,9 +447,226 @@ final class MotionSpriteDetector {
                     sumB / count,
                     sumLuma / count,
                     sumMotion / count,
-                    compact));
+                    compact,
+                    1f));
         }
         return blobs;
+    }
+
+    private ArrayList<Blob> buildAppearanceBlobs(
+            boolean[] changed,
+            float[] deltas,
+            int[] currR,
+            int[] currG,
+            int[] currB,
+            int[] currLuma,
+            boolean[] currValid,
+            int gridWidth,
+            int gridHeight,
+            int stride,
+            int frameWidth,
+            int frameHeight,
+            CatchConfig config) {
+        int total = gridWidth * gridHeight;
+        int[] sumIntegral = new int[(gridWidth + 1) * (gridHeight + 1)];
+        int[] countIntegral = new int[(gridWidth + 1) * (gridHeight + 1)];
+        for (int gy = 0; gy < gridHeight; gy++) {
+            int rowSum = 0;
+            int rowCount = 0;
+            for (int gx = 0; gx < gridWidth; gx++) {
+                int idx = gy * gridWidth + gx;
+                if (currValid[idx]) {
+                    rowSum += currLuma[idx];
+                    rowCount++;
+                }
+                int integralIndex = (gy + 1) * (gridWidth + 1) + gx + 1;
+                int above = gy * (gridWidth + 1) + gx + 1;
+                sumIntegral[integralIndex] = sumIntegral[above] + rowSum;
+                countIntegral[integralIndex] = countIntegral[above] + rowCount;
+            }
+        }
+
+        boolean[] mask = new boolean[total];
+        float[] scores = new float[total];
+        for (int gy = 0; gy < gridHeight; gy++) {
+            for (int gx = 0; gx < gridWidth; gx++) {
+                int idx = gy * gridWidth + gx;
+                if (!currValid[idx]) {
+                    continue;
+                }
+                int px = Math.min(frameWidth - 1, gx * stride + stride / 2);
+                int py = Math.min(frameHeight - 1, gy * stride + stride / 2);
+                if (isAppearanceIgnored(px, py, frameWidth, frameHeight, config)) {
+                    continue;
+                }
+                int localRadius = 4;
+                int x0 = Math.max(0, gx - localRadius);
+                int y0 = Math.max(0, gy - localRadius);
+                int x1 = Math.min(gridWidth - 1, gx + localRadius);
+                int y1 = Math.min(gridHeight - 1, gy + localRadius);
+                int localSum = integralSum(sumIntegral, gridWidth, x0, y0, x1, y1);
+                int localCount = integralSum(countIntegral, gridWidth, x0, y0, x1, y1);
+                if (localCount <= 0) {
+                    continue;
+                }
+                float localMean = localSum / (float) localCount;
+                int r = currR[idx];
+                int g = currG[idx];
+                int b = currB[idx];
+                int luma = currLuma[idx];
+                int saturation = Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b));
+                float contrast = localMean - luma;
+                boolean dark = luma < 84 && (contrast > 7f || luma < 58);
+                boolean purpleBlueDark = saturation >= 10 && b >= r + 4 && b >= g - 14;
+                boolean notDebugRed = !(r > 170 && r > g + 60 && r > b + 55);
+                if (dark && purpleBlueDark && notDebugRed) {
+                    mask[idx] = true;
+                    scores[idx] = Math.max(0f, contrast) + Math.max(0, 88 - luma) * 0.45f + saturation * 0.10f + deltas[idx] * 0.35f;
+                }
+            }
+        }
+        return buildAppearanceBlobsFromMask(mask, scores, changed, currR, currG, currB, currLuma,
+                gridWidth, gridHeight, stride, frameWidth, frameHeight, config);
+    }
+
+    private ArrayList<Blob> buildAppearanceBlobsFromMask(
+            boolean[] mask,
+            float[] scores,
+            boolean[] changed,
+            int[] currR,
+            int[] currG,
+            int[] currB,
+            int[] currLuma,
+            int gridWidth,
+            int gridHeight,
+            int stride,
+            int frameWidth,
+            int frameHeight,
+            CatchConfig config) {
+        ArrayList<Blob> blobs = new ArrayList<>();
+        int total = gridWidth * gridHeight;
+        boolean[] visited = new boolean[total];
+        int[] queue = new int[total];
+        int maxCells = Math.max(18, Math.min(180, Math.round(gridWidth * gridHeight * 0.012f)));
+        int maxSide = Math.max(90, Math.min(230, config.maxBlobSidePx));
+
+        for (int start = 0; start < total; start++) {
+            if (!mask[start] || visited[start]) {
+                continue;
+            }
+            int head = 0;
+            int tail = 0;
+            queue[tail++] = start;
+            visited[start] = true;
+
+            int count = 0;
+            int changedCells = 0;
+            int minGx = gridWidth;
+            int minGy = gridHeight;
+            int maxGx = 0;
+            int maxGy = 0;
+            float sumX = 0f;
+            float sumY = 0f;
+            float sumR = 0f;
+            float sumG = 0f;
+            float sumB = 0f;
+            float sumLuma = 0f;
+            float sumScore = 0f;
+
+            while (head < tail) {
+                int idx = queue[head++];
+                int gx = idx % gridWidth;
+                int gy = idx / gridWidth;
+                count++;
+                if (changed[idx]) {
+                    changedCells++;
+                }
+                minGx = Math.min(minGx, gx);
+                minGy = Math.min(minGy, gy);
+                maxGx = Math.max(maxGx, gx);
+                maxGy = Math.max(maxGy, gy);
+                float px = Math.min(frameWidth - 1, gx * stride + stride * 0.5f);
+                float py = Math.min(frameHeight - 1, gy * stride + stride * 0.5f);
+                sumX += px;
+                sumY += py;
+                sumR += currR[idx];
+                sumG += currG[idx];
+                sumB += currB[idx];
+                sumLuma += currLuma[idx];
+                sumScore += scores[idx];
+
+                for (int oy = -1; oy <= 1; oy++) {
+                    int ny = gy + oy;
+                    if (ny < 0 || ny >= gridHeight) {
+                        continue;
+                    }
+                    for (int ox = -1; ox <= 1; ox++) {
+                        if (ox == 0 && oy == 0) {
+                            continue;
+                        }
+                        int nx = gx + ox;
+                        if (nx < 0 || nx >= gridWidth) {
+                            continue;
+                        }
+                        int next = ny * gridWidth + nx;
+                        if (mask[next] && !visited[next]) {
+                            visited[next] = true;
+                            queue[tail++] = next;
+                        }
+                    }
+                }
+            }
+
+            int bboxCells = Math.max(1, (maxGx - minGx + 1) * (maxGy - minGy + 1));
+            float density = count / (float) bboxCells;
+            int boxWidth = (maxGx - minGx + 1) * stride;
+            int boxHeight = (maxGy - minGy + 1) * stride;
+            if (count < 2
+                    || count > maxCells
+                    || boxWidth > maxSide
+                    || boxHeight > maxSide
+                    || density < 0.16f) {
+                continue;
+            }
+            RectF box = new RectF(
+                    clamp(minGx * stride, 0, frameWidth - 1),
+                    clamp(minGy * stride, 0, frameHeight - 1),
+                    clamp((maxGx + 1) * stride, 1, frameWidth),
+                    clamp((maxGy + 1) * stride, 1, frameHeight));
+            float compact = clamp01(density * 2.0f) * clamp01(count / 9f);
+            blobs.add(new Blob(
+                    sumX / count,
+                    sumY / count,
+                    box,
+                    count,
+                    sumR / count,
+                    sumG / count,
+                    sumB / count,
+                    sumLuma / count,
+                    sumScore / count,
+                    compact,
+                    changedCells / (float) count));
+        }
+        return blobs;
+    }
+
+    private ArrayList<Blob> fuseBlobs(List<Blob> motionBlobs, List<Blob> appearanceBlobs) {
+        ArrayList<Blob> fused = new ArrayList<>(motionBlobs);
+        for (Blob appearance : appearanceBlobs) {
+            boolean overlaps = false;
+            for (Blob motion : motionBlobs) {
+                if (rectOverlapRatio(appearance.box, motion.box) > 0.35f
+                        || distance(appearance.centerX, appearance.centerY, motion.centerX, motion.centerY)
+                        < Math.max(appearance.width(), appearance.height()) * 0.55f) {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if (!overlaps) {
+                fused.add(appearance);
+            }
+        }
+        return fused;
     }
 
     private boolean hasCompatiblePrevious(int width, int height, int gridWidth, int gridHeight, int stride) {
@@ -439,6 +747,30 @@ final class MotionSpriteDetector {
                 && distance(x, y, config.fallbackBallX, config.fallbackBallY) < config.ignoreBallRadiusPx;
     }
 
+    private boolean isAppearanceIgnored(int x, int y, int width, int height, CatchConfig config) {
+        if (isIgnored(x, y, width, height, config)) {
+            return true;
+        }
+        int topUi = Math.max(config.ignoreTopPx, Math.round(height * 0.13f));
+        int bottomUi = Math.max(config.ignoreBottomPx, Math.round(height * 0.08f));
+        if (y < topUi || y >= height - bottomUi) {
+            return true;
+        }
+        return x > width - Math.round(width * 0.17f) && y < Math.round(height * 0.32f);
+    }
+
+    private int integralSum(int[] integral, int gridWidth, int x0, int y0, int x1, int y1) {
+        int stride = gridWidth + 1;
+        int left = x0;
+        int top = y0;
+        int right = x1 + 1;
+        int bottom = y1 + 1;
+        return integral[bottom * stride + right]
+                - integral[top * stride + right]
+                - integral[bottom * stride + left]
+                + integral[top * stride + left];
+    }
+
     private int averageColor(Bitmap bitmap, int x, int y, int radius) {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
@@ -512,6 +844,19 @@ final class MotionSpriteDetector {
         return Math.max(0f, Math.min(1f, value));
     }
 
+    private float rectOverlapRatio(RectF a, RectF b) {
+        float left = Math.max(a.left, b.left);
+        float top = Math.max(a.top, b.top);
+        float right = Math.min(a.right, b.right);
+        float bottom = Math.min(a.bottom, b.bottom);
+        if (right <= left || bottom <= top) {
+            return 0f;
+        }
+        float intersection = (right - left) * (bottom - top);
+        float smaller = Math.max(1f, Math.min(a.width() * a.height(), b.width() * b.height()));
+        return intersection / smaller;
+    }
+
     private int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
@@ -531,6 +876,7 @@ final class MotionSpriteDetector {
         final float avgLuma;
         final float motion;
         final float compactScore;
+        final float changeRatio;
 
         Blob(
                 float centerX,
@@ -542,7 +888,8 @@ final class MotionSpriteDetector {
                 float avgB,
                 float avgLuma,
                 float motion,
-                float compactScore) {
+                float compactScore,
+                float changeRatio) {
             this.centerX = centerX;
             this.centerY = centerY;
             this.box = box;
@@ -553,6 +900,7 @@ final class MotionSpriteDetector {
             this.avgLuma = avgLuma;
             this.motion = motion;
             this.compactScore = compactScore;
+            this.changeRatio = changeRatio;
         }
 
         float width() {
@@ -655,13 +1003,29 @@ final class MotionSpriteDetector {
 
     private static final class Candidate {
         final Track track;
+        final Blob blob;
         final float score;
         final float jumpPx;
+        final String source;
 
         Candidate(Track track, float score, float jumpPx) {
             this.track = track;
+            this.blob = null;
             this.score = score;
             this.jumpPx = jumpPx;
+            this.source = "motion";
+        }
+
+        Candidate(Blob blob, float score, float jumpPx, String source) {
+            this.track = null;
+            this.blob = blob;
+            this.score = score;
+            this.jumpPx = jumpPx;
+            this.source = source;
+        }
+
+        Blob blob() {
+            return blob != null ? blob : track.lastBlob;
         }
     }
 }

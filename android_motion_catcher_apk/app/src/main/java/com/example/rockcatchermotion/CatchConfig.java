@@ -155,7 +155,7 @@ final class CatchConfig {
 
     static void upgradeDefaults(SharedPreferences prefs) {
         String version = prefs.getString("config_version", "");
-        if ("3".equals(version)) {
+        if ("4".equals(version)) {
             return;
         }
         SharedPreferences.Editor editor = prefs.edit();
@@ -177,7 +177,7 @@ final class CatchConfig {
         putIfMissing(editor, prefs, "search_wait_ms", "5000");
         putIfMissing(editor, prefs, "search_step", "220");
         putIfMissing(editor, prefs, "search_gesture_ms", "520");
-        editor.putString("config_version", "3");
+        editor.putString("config_version", "4");
         editor.apply();
     }
 
