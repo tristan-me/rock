@@ -273,6 +273,9 @@ final class MotionSpriteDetector {
             if (track.updatedSerial != frameSerial || track.updates < 3 || track.lastBlob == null) {
                 continue;
             }
+            if (looksLikeSelfAvatar(track.lastBlob)) {
+                continue;
+            }
             boolean smallDarkTarget = looksLikeSmallDarkTarget(track.lastBlob);
             float jump = track.maxJump(now, config.historyMs, Math.min(700, Math.max(350, config.historyMs / 4)));
             float requiredJump = smallDarkTarget
@@ -318,7 +321,7 @@ final class MotionSpriteDetector {
             boolean locallyAlive = blob.changeRatio >= 0.012f
                     || blob.motion >= config.motionThreshold * 0.32f
                     || jump >= Math.max(10f, config.minJumpPx * 0.10f);
-            if (!locallyAlive && track.updates < 7) {
+            if (!locallyAlive) {
                 continue;
             }
             float darknessScore = clamp01((94f - blob.avgLuma) / 58f);
@@ -352,7 +355,7 @@ final class MotionSpriteDetector {
         float minJump = Math.max(20f, config.minJumpPx * 0.20f);
         float maxJump = Math.max(config.trackLinkPx * 2.8f, config.minJumpPx * 2.8f);
         for (Blob current : appearanceBlobs) {
-            if (!looksLikeSmallDarkTarget(current)) {
+            if (!looksLikeSmallDarkTarget(current) || looksLikeSelfAvatar(current)) {
                 continue;
             }
             boolean locallyMoving = current.changeRatio >= 0.025f
@@ -845,6 +848,29 @@ final class MotionSpriteDetector {
         if (y < config.ignoreTopPx || y >= height - config.ignoreBottomPx) {
             return true;
         }
+        int topUi = Math.max(config.ignoreTopPx, Math.round(height * 0.13f));
+        int bottomUi = height - Math.max(config.ignoreBottomPx, Math.round(height * 0.12f));
+        if (y < topUi || y >= bottomUi) {
+            return true;
+        }
+        if (x < Math.round(width * 0.13f)) {
+            return true;
+        }
+        if (looksInsideSelfAvatarRegion(x, y, width, height)) {
+            return true;
+        }
+        if (x > Math.round(width * 0.46f)
+                && x < Math.round(width * 0.82f)
+                && y > Math.round(height * 0.15f)
+                && y < Math.round(height * 0.29f)) {
+            return true;
+        }
+        if (x > Math.round(width * 0.84f) && y < Math.round(height * 0.22f)) {
+            return true;
+        }
+        if (x > Math.round(width * 0.69f) && y > Math.round(height * 0.58f)) {
+            return true;
+        }
         float reticleX = resolvedReticleX(config, width);
         float reticleY = resolvedReticleY(config, height);
         float ballX = resolvedBallX(config, width);
@@ -861,18 +887,7 @@ final class MotionSpriteDetector {
         if (isIgnored(x, y, width, height, config)) {
             return true;
         }
-        int topUi = Math.max(config.ignoreTopPx, Math.round(height * 0.13f));
-        int bottomUi = Math.max(config.ignoreBottomPx, Math.round(height * 0.08f));
-        if (y < topUi || y >= height - bottomUi) {
-            return true;
-        }
-        if (x < Math.round(width * 0.11f)) {
-            return true;
-        }
-        if (x > width - Math.round(width * 0.18f) && y > Math.round(height * 0.50f)) {
-            return true;
-        }
-        return x > width - Math.round(width * 0.17f) && y < Math.round(height * 0.32f);
+        return false;
     }
 
     private boolean looksLikeSmallDarkTarget(Blob blob) {
@@ -890,9 +905,18 @@ final class MotionSpriteDetector {
     private boolean looksLikeSelfAvatar(Blob blob) {
         float frameWidth = Math.max(1f, prevFrameWidth);
         float frameHeight = Math.max(1f, prevFrameHeight);
-        return blob.centerX > frameWidth * 0.38f
-                && blob.centerX < frameWidth * 0.62f
-                && blob.centerY > frameHeight * 0.50f;
+        return looksInsideSelfAvatarRegion(
+                Math.round(blob.centerX),
+                Math.round(blob.centerY),
+                Math.round(frameWidth),
+                Math.round(frameHeight));
+    }
+
+    private boolean looksInsideSelfAvatarRegion(int x, int y, int width, int height) {
+        return x > Math.round(width * 0.30f)
+                && x < Math.round(width * 0.55f)
+                && y > Math.round(height * 0.27f)
+                && y < Math.round(height * 0.84f);
     }
 
     private float worldRegionScore(Blob blob) {

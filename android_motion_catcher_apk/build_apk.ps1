@@ -61,8 +61,8 @@ Assert-LastExit "aapt2 compile"
     --auto-add-overlay `
     --min-sdk-version 26 `
     --target-sdk-version 35 `
-    --version-code 7 `
-    --version-name 0.7.0
+    --version-code 9 `
+    --version-name 0.8.1
 Assert-LastExit "aapt2 link"
 
 $ClassesDir = Join-Path $Build "classes"

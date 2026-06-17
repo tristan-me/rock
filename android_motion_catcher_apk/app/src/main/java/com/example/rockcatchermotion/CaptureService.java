@@ -20,6 +20,7 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.WindowManager;
 
 import java.io.File;
@@ -29,6 +30,8 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class CaptureService extends Service {
+    private static final String TAG = "MotionCatcher";
+
     static final String ACTION_START = "com.example.rockcatchermotion.START";
     static final String ACTION_ARM = "com.example.rockcatchermotion.ARM";
     static final String ACTION_PAUSE = "com.example.rockcatchermotion.PAUSE";
@@ -162,8 +165,8 @@ public final class CaptureService extends Service {
         DisplayMetrics metrics = new DisplayMetrics();
         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         wm.getDefaultDisplay().getRealMetrics(metrics);
-        int width = metrics.widthPixels;
-        int height = metrics.heightPixels;
+        int width = Math.max(metrics.widthPixels, metrics.heightPixels);
+        int height = Math.min(metrics.widthPixels, metrics.heightPixels);
         int density = metrics.densityDpi;
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
@@ -299,9 +302,13 @@ public final class CaptureService extends Service {
         float endY = clamp(aimStartY + stepY, 0, result.frameHeight - 1);
         String status = String.format(
                 Locale.US,
-                "%s %s dist=%.1f aim=(%.0f,%.0f)->(%.0f,%.0f)",
+                "%s %s target=(%.0f,%.0f %.0fx%.0f) dist=%.1f aim=(%.0f,%.0f)->(%.0f,%.0f)",
                 armed ? "抓捕中" : "待命识别",
                 result.status,
+                result.sprite.centerX(),
+                result.sprite.centerY(),
+                result.sprite.box.width(),
+                result.sprite.box.height(),
                 distance,
                 aimStartX,
                 aimStartY,
@@ -553,6 +560,7 @@ public final class CaptureService extends Service {
     }
 
     private void emit(String status) {
+        Log.d(TAG, status);
         StatusListener current = listener;
         if (current != null) {
             current.onStatus(status);
